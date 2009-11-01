@@ -1,6 +1,8 @@
 (setq elmo-spam-scheme 'bogofilter)
 (require 'wl-spam)
 
+(setq-default mime-transfer-level 8)
+
 (setq
  wl-default-folder ".inbox"
  wl-draft-folder ".draft"
