@@ -1,10 +1,8 @@
 ;;
 ;; Chinese font setting
 ;;
-;(set-frame-font "Droid Sans Mono Dot Zero-9")
-;(add-to-list 'default-frame-alist '(font . "Droid Sans Mono Dot Zero-9"))
-(set-frame-font "DejaVu Sans Mono-9")
-(add-to-list 'default-frame-alist '(font . "DejaVu Sans Mono-9"))
+(set-frame-font "DejaVu Sans Mono-8")
+(add-to-list 'default-frame-alist '(font . "DejaVu Sans Mono-8"))
 (or (string= (frame-parameter nil 'font) "tty")
     (set-fontset-font (frame-parameter nil 'font)
                       'han (font-spec :family "WenQuanYi Micro Hei") nil 'prepend)
