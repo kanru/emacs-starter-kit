@@ -10,6 +10,18 @@
 
 (add-hook 'before-make-frame-hook 'turn-off-tool-bar)
 
+(set-language-info-alist
+ "Chinese-UTF-8" '((charset unicode-bmp unicode)
+		  (iso639-language . zh)
+		  (coding-system utf-8)
+		  (coding-priority utf-8 chinese-big5 iso-2022-cn chinese-iso-8bit)
+		  (input-method . "chinese-cns-tsangchi")
+		  (features china-util)
+		  (sample-text . "Cantonese ($(0GnM$(B,$(0N]0*Hd(B)	$(0*/=((B, $(0+$)p(B")
+		  (documentation . "0")
+		  (tutorial . "TUTORIAL.zh"))
+ '("Chinese"))
+(set-language-environment "Chinese-UTF-8")
 (set-terminal-coding-system 'utf-8)
 (set-keyboard-coding-system 'utf-8)
 (prefer-coding-system 'utf-8)
