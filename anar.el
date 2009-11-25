@@ -1,23 +1,20 @@
+(defun load-dejavu ()
+  "load-dejavu:"
+  (set-default-font "DejaVu Sans Mono-8")
+  (set-fontset-font (frame-parameter nil 'font)
+                    'han (font-spec :family "WenQuanYi Micro Hei"))
+  (set-fontset-font (frame-parameter nil 'font)
+                    'symbol (font-spec :family "WenQuanYi Micro Hei"))
+  (set-fontset-font (frame-parameter nil 'font)
+                    'cjk-misc (font-spec :family "WenQuanYi Micro Hei"))
+  (set-fontset-font (frame-parameter nil 'font)
+                    'bopomofo (font-spec :family "WenQuanYi Micro Hei"))
+  )
 ;;
-;; Chinese font setting
+;; Load settings
 ;;
-(set-frame-font "DejaVu Sans Mono-8")
-(add-to-list 'default-frame-alist '(font . "DejaVu Sans Mono-8"))
-(or (string= (frame-parameter nil 'font) "tty")
-    (set-fontset-font (frame-parameter nil 'font)
-                      'han (font-spec :family "WenQuanYi Micro Hei") nil 'prepend)
-    (set-fontset-font (frame-parameter nil 'font)
-                      'symbol (font-spec :family "DejaVu Sans Mono") nil 'prepend)
-    (set-fontset-font (frame-parameter nil 'font)
-                      'cyrillic (font-spec :family "DejaVu Sans Mono") nil 'prepend)
-    (set-fontset-font (frame-parameter nil 'font)
-                      'cjk-misc (font-spec :family "WenQuanYi Micro Hei") nil 'prepend)
-    (set-fontset-font (frame-parameter nil 'font)
-                      'bopomofo (font-spec :family "WenQuanYi Micro Hei") nil 'prepend)
-    (set-fontset-font (frame-parameter nil 'font)
-                      'unicode (font-spec :family "DejaVu Sans Mono") nil 'append)
-    )
- 
+(load-dejavu)
+
 ;;
 ;; Browser
 ;;
