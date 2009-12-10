@@ -1178,7 +1178,7 @@ Complete list of currently available key bindings:
   (let ((thread-id (notmuch-search-find-thread-id)))
     (if (> (length thread-id) 0)
 	(notmuch-show thread-id (current-buffer))
-      (message "End of search results"))))
+      (error "End of search results"))))
 
 (defun notmuch-search-reply-to-thread ()
   "Begin composing a reply to the entire current thread in a new buffer."
