@@ -1,3 +1,4 @@
+(require 'notmuch)
 (setq notmuch-folders '(("inbox"           . "tag:inbox")
                         ("unread"          . "tag:unread")
                         ("apt-listchanges" . "tag:apt-listchanges")
@@ -14,5 +15,12 @@
                         ("0xlab"           . "tag:0xlab")
                         ("madbutterfly"    . "tag:madbutterfly")
                         ("notmuch"         . "tag:notmuch")
+                        ("emacs-devel"     . "tag:emacs-devel")
                         ))
 
+(defun notmuch-mark-as-spam ()
+  (interactive)
+  (notmuch-call-notmuch-process "tag" "-unread" "-inbox" "+spam"
+                                (notmuch-search-find-thread-id)
+                                "and"
+                                notmuch-search-query-string))

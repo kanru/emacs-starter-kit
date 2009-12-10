@@ -1,0 +1,32 @@
+(defun nm-inline-fontify (mode from to)
+  (let ((obuf (current-buffer)) text)
+    (with-current-buffer (generate-new-buffer "*fontification*")
+      (buffer-disable-undo)
+      (insert-buffer-substring obuf from to)
+      (require 'font-lock)
+      (let ((font-lock-maximum-size nil)
+            (font-lock-mode-hook nil)
+            (font-lock-support-mode nil)
+            (font-lock-verbose nil))
+        (funcall mode)
+        (unless (symbol-value 'font-lock-mode)
+          (font-lock-fontify-buffer)))
+      ;; By default, XEmacs font-lock uses non-duplicable text
+      ;; properties.  This code forces all the text properties
+      ;; to be copied along with the text.
+      (when (featurep 'xemacs)
+	(map-extents (lambda (ext ignored)
+		       (set-extent-property ext 'duplicable t)
+		       nil)
+		     nil nil nil nil nil 'text-prop))
+      (setq text (buffer-string))
+      (kill-buffer (current-buffer)))
+    (insert text)
+    ))
+
+(defun nm-inline-fontify-region (mode begin end)
+  (interactive "aMode: \nr")
+  (save-excursion
+    (goto-char end)
+    (nm-inline-fontify mode begin end)
+    (delete-region begin end)))
