@@ -42,18 +42,25 @@
 (require 'jabber-core)
 (require 'jabber-alert)
 (require 'jabber-util)
+(require 'jabber-autoloads)
+(require 'jabber-muc-nick-completion)   ;we need jabber-muc-looks-like-personal-p
 (require 'cl)
 
 (defgroup jabber-activity nil
   "activity tracking options"
   :group 'jabber)
 
+;; All the (featurep 'jabber-activity) is so we don't call a function
+;; with an autoloaded cookie while the file is loading, since that
+;; would lead to endless load recursion.
+
 (defcustom jabber-activity-make-string 'jabber-activity-make-string-default
   "Function to call, for making the string to put in the mode
 line.  The default function returns the nick of the user."
   :set #'(lambda (var val)
 	   (custom-set-default var val)
-	   (when (fboundp 'jabber-activity-make-name-alist)
+	   (when (and (featurep 'jabber-activity)
+		      (fboundp 'jabber-activity-make-name-alist))
 	     (jabber-activity-make-name-alist)
 	     (jabber-activity-mode-line-update)))
   :type 'function
@@ -70,7 +77,8 @@ at least this long, when possible."
 JIDs."
   :set #'(lambda (var val)
 	   (custom-set-default var val)
-	   (when (fboundp 'jabber-activity-make-name-alist)
+	   (when (and (featurep 'jabber-activity)
+		      (fboundp 'jabber-activity-make-name-alist))
 	     (jabber-activity-make-name-alist)
 	     (jabber-activity-mode-line-update)))
   :type '(choice (function-item :tag "Keep strings"
@@ -86,7 +94,8 @@ JIDs."
   :group 'jabber-activity
   :set #'(lambda (var val)
 	   (custom-set-default var val)
-	   (when (bound-and-true-p jabber-activity-mode)
+	   (when (and (featurep 'jabber-activity)
+		      (bound-and-true-p jabber-activity-mode))
 	     (jabber-activity-mode -1)
 	     (jabber-activity-mode 1))))
 
@@ -97,7 +106,7 @@ Same syntax as `mode-line-format'."
   :type 'sexp
   :group 'jabber-activity
   :set #'(lambda (var val)
-	   (if (not (bound-and-true-p jabber-activity-mode))
+	   (if (not (and (featurep 'jabber-activity) (bound-and-true-p jabber-activity-mode)))
 	       (custom-set-default var val)
 	     (jabber-activity-mode -1)
 	     (custom-set-default var val)
@@ -115,9 +124,19 @@ there are unread messages which otherwise would be lost."
   :type 'boolean
   :group 'jabber-activity)
 
+(defcustom jabber-activity-banned nil
+  "List of regexps of banned JID"
+  :type '(repeat string)
+  :group 'jabber-activity)
+
 (defface jabber-activity-face
   '((t (:foreground "red" :weight bold)))
   "The face for displaying jabber-activity-string in the mode line"
+  :group 'jabber-activity)
+
+(defface jabber-activity-personal-face
+  '((t (:foreground "blue" :weight bold)))
+  "The face for displaying personal jabber-activity-string in the mode line"
   :group 'jabber-activity)
 
 (defvar jabber-activity-jids nil
@@ -201,10 +220,14 @@ least `jabber-activity-shorten-minimum' long."
       (get-buffer (jabber-muc-get-buffer jid))))
 
 (defun jabber-activity-show-p-default (jid)
-  "Returns t only if there is an invisible buffer for JID"
+  "Returns t only if there is an invisible buffer for JID
+and JID not in jabber-activity-banned"
   (let ((buffer (jabber-activity-find-buffer-name jid)))
     (and (buffer-live-p buffer)
-	 (not (get-buffer-window buffer 'visible)))))
+	 (not (get-buffer-window buffer 'visible))
+         (not (dolist (entry jabber-activity-banned)
+                (when (string-match entry jid)
+                  (return t)))))))
 
 (defun jabber-activity-make-name-alist ()
   "Rebuild `jabber-activity-name-alist' based on currently known JIDs"
@@ -226,9 +249,11 @@ if needed, and returns a (jid . string) pair suitable for the mode line"
 		       (cons jid (mapcar #'car jabber-activity-name-alist))))
 	(jabber-activity-lookup-name jid)))))
 
-(defun jabber-activity-mode-line-update ()
+(defun jabber-activity-mode-line-update (&optional group text presence)
   "Update the string shown in the mode line using `jabber-activity-make-string'
-on JIDs where `jabber-activity-show-p'"
+on JIDs where `jabber-activity-show-p'. Optional not-nil GROUP mean that message come from MUC.
+Optional TEXT used with one-to-one or MUC chats and may be used to identify personal MUC message.
+Optional PRESENCE mean personal presence request or alert."
   (setq jabber-activity-mode-string
   	(if jabber-activity-jids
 	    (mapconcat
@@ -236,12 +261,21 @@ on JIDs where `jabber-activity-show-p'"
 	       (let ((jump-to-jid (car x)))
 		 (jabber-propertize
 		  (cdr x)
-		  'face 'jabber-activity-face
-		  'local-map (make-mode-line-mouse-map
-			      'mouse-1 `(lambda ()
-					  (interactive)
-					  (jabber-activity-switch-to
-					   ,(car x))))
+		  'face (if (or
+                             (and group text (jabber-muc-looks-like-personal-p text group)) ;MUC message
+                             (and (not group) text) ;one-to-one chat message
+                             presence               ;presence request/alert
+                             )
+                            'jabber-activity-personal-face
+                          'jabber-activity-face)
+		  ;; XXX: XEmacs doesn't have make-mode-line-mouse-map.
+		  ;; Is there another way to make this work?
+		  'local-map (when (fboundp 'make-mode-line-mouse-map)
+			       (make-mode-line-mouse-map
+				'mouse-1 `(lambda ()
+					    (interactive "@")
+					    (jabber-activity-switch-to
+					     ,(car x)))))
 		  'help-echo (concat "Jump to "
 				     (jabber-jid-displayname (car x))
 				     "'s buffer"))))
@@ -264,19 +298,21 @@ on JIDs where `jabber-activity-show-p'"
 
 (defun jabber-activity-add (from buffer text proposed-alert)
   "Add a JID to mode line when `jabber-activity-show-p'"
-  ;; In case of private MUC message, we want to keep the full JID.
-  (let ((jid (if (jabber-muc-sender-p from)
-		 from
-	       (jabber-jid-user from))))
-    (when (funcall jabber-activity-show-p jid)
-      (add-to-list 'jabber-activity-jids jid)
-      (jabber-activity-mode-line-update))))
+  (when (funcall jabber-activity-show-p from)
+    (add-to-list 'jabber-activity-jids from)
+    (jabber-activity-mode-line-update nil text)))
 
 (defun jabber-activity-add-muc (nick group buffer text proposed-alert)
   "Add a JID to mode line when `jabber-activity-show-p'"
   (when (funcall jabber-activity-show-p group)
     (add-to-list 'jabber-activity-jids group)
-    (jabber-activity-mode-line-update)))
+    (jabber-activity-mode-line-update group text)))
+
+(defun jabber-activity-presence (who oldstatus newstatus statustext proposed-alert)
+  "Add a JID to mode line on subscription requests."
+  (when (string= newstatus "subscribe")
+    (add-to-list 'jabber-activity-jids (symbol-name who))
+    (jabber-activity-mode-line-update nil nil t)))
 
 (defun jabber-activity-kill-hook ()
   "Query the user as to whether killing Emacs should be cancelled
@@ -290,17 +326,27 @@ when there are unread messages which otherwise would be lost, if
 
 ;;; Interactive functions
 
+(defvar jabber-activity-last-buffer nil
+  "Last non-Jabber buffer used.")
+
 (defun jabber-activity-switch-to (&optional jid-param)
   "If JID-PARAM is provided, switch to that buffer.  If JID-PARAM is nil and
 there has been activity in another buffer, switch to that buffer.  If no such
-buffer exists, switch back to most recently used buffer."
-  (interactive)
-  (if (or jid-param jabber-activity-jids)
-      (let ((jid (or jid-param (car jabber-activity-jids))))
-	(switch-to-buffer (jabber-activity-find-buffer-name jid))
-	(jabber-activity-clean))
-    ;; Switch back to the buffer used last
-    (switch-to-buffer nil)))
+buffer exists, switch back to the last non Jabber chat buffer used."
+    (interactive)
+    (if (or jid-param jabber-activity-jids)
+        (let ((jid (or jid-param (car jabber-activity-jids))))
+          (unless (eq major-mode 'jabber-chat-mode)
+            (setq jabber-activity-last-buffer (current-buffer)))
+          (switch-to-buffer (jabber-activity-find-buffer-name jid))
+          (jabber-activity-clean))
+      (if (eq major-mode 'jabber-chat-mode)
+	  ;; Switch back to the buffer used last
+	  (when (buffer-live-p jabber-activity-last-buffer)
+	    (switch-to-buffer jabber-activity-last-buffer))
+	(message "No new activity"))))
+
+(defvar jabber-activity-idle-timer nil "Idle timer used for activity cleaning")
 
 ;;;###autoload
 (define-minor-mode jabber-activity-mode
@@ -322,8 +368,12 @@ With a numeric arg, enable this display if arg is positive."
 		  'jabber-activity-add)
 	(add-hook 'jabber-muc-hooks
 		  'jabber-activity-add-muc)
-	(add-hook 'jabber-post-connect-hook
-		  'jabber-activity-make-name-alist)
+	(add-hook 'jabber-presence-hooks
+		  'jabber-activity-presence)
+        (setq jabber-activity-idle-timer (run-with-idle-timer 2 t 'jabber-activity-clean))
+	;; XXX: reactivate
+	;; (add-hook 'jabber-post-connect-hooks
+;; 		  'jabber-activity-make-name-alist)
 	(add-to-list 'kill-emacs-query-functions
 		     'jabber-activity-kill-hook)
 	(add-to-list 'global-mode-string
@@ -333,6 +383,11 @@ With a numeric arg, enable this display if arg is positive."
 	  ;; existing title format.  In particular, if the car is
 	  ;; a symbol, we can't just add our stuff at the beginning.
 	  ;; If the car is "", we should be safe.
+	  ;; 
+	  ;; In my experience, sometimes the activity count gets
+	  ;; included twice in the title.  I'm not sure exactly why,
+	  ;; but it would be nice to replace the code below with
+	  ;; something cleaner.
 	  (if (equal (car frame-title-format) "")
 	      (add-to-list 'frame-title-format
 			   jabber-activity-count-in-title-format)
@@ -354,8 +409,12 @@ With a numeric arg, enable this display if arg is positive."
 		   'jabber-activity-add)
       (remove-hook 'jabber-muc-hooks
 		   'jabber-activity-add-muc)
-      (remove-hook 'jabber-post-connect-hook
-		   'jabber-activity-make-name-alist)
+      (remove-hook 'jabber-presence-hooks
+		   'jabber-activity-presence)
+      (ignore-errors (cancel-timer jabber-activity-idle-timer))
+      ;; XXX: reactivate
+;;       (remove-hook 'jabber-post-connect-hooks
+;; 		   'jabber-activity-make-name-alist)
       (setq global-mode-string (delete '(t jabber-activity-mode-string)
 				       global-mode-string))
       (setq frame-title-format

@@ -1,7 +1,7 @@
 ;; jabber-ft-server.el - handle incoming file transfers, by JEP-0096
 
+;; Copyright (C) 2003, 2004, 2007 - Magnus Henoch - mange@freemail.hu
 ;; Copyright (C) 2002, 2003, 2004 - tom berger - object@intelectronica.net
-;; Copyright (C) 2003, 2004 - Magnus Henoch - mange@freemail.hu
 
 ;; This file is a part of jabber.el.
 
@@ -28,14 +28,17 @@
 (defvar jabber-ft-size nil
   "Size of the file that is being downloaded")
 
+(defvar jabber-ft-md5-hash nil
+  "MD5 hash of the file that is being downloaded")
+
 (add-to-list 'jabber-advertised-features "http://jabber.org/protocol/si/profile/file-transfer")
 
 (add-to-list 'jabber-si-profiles
 	     (list "http://jabber.org/protocol/si/profile/file-transfer"
 		   'jabber-ft-accept
-		   'jabber-ft-data))
+		   'jabber-ft-server-connected))
 
-(defun jabber-ft-accept (xml-data)
+(defun jabber-ft-accept (jc xml-data)
   "Receive IQ stanza containing file transfer request, ask user"
   (let* ((from (jabber-xml-get-attribute xml-data 'from))
 	 (query (jabber-iq-query xml-data))
@@ -70,6 +73,7 @@
 	   (buffer (create-file-buffer file-name)))
       (message "Starting download of %s..." (file-name-nondirectory file-name))
       (with-current-buffer buffer
+	(kill-all-local-variables)
 	(setq buffer-file-coding-system 'binary)
 	;; For Emacs, switch buffer to unibyte _before_ anything goes into it,
 	;; otherwise binary files are corrupted.  For XEmacs, it isn't needed,
@@ -77,27 +81,50 @@
 	(if (fboundp 'set-buffer-multibyte)
 	    (set-buffer-multibyte nil))
 	(set-visited-file-name file-name t)
-	(make-local-variable 'jabber-ft-size)
-	(setq jabber-ft-size (string-to-number size)))
+	(set (make-local-variable 'jabber-ft-size) 
+	     (string-to-number size))
+	(set (make-local-variable 'jabber-ft-md5-hash)
+	     md5-hash))
       (add-to-list 'jabber-ft-sessions
 		   (cons (list si-id from) buffer)))
       
     ;; to support range, return something sensible here
     nil))
 
-(defun jabber-ft-data (jid sid data)
+(defun jabber-ft-server-connected (jc jid sid send-data-function)
+  ;; We don't really care about the send-data-function.  But if it's
+  ;; a string, it means that we have no connection.
+  (if (stringp send-data-function)
+      (message "File receiving failed: %s" send-data-function)
+    ;; On success, we just return our data receiving function.
+    'jabber-ft-data))
+
+(defun jabber-ft-data (jc jid sid data)
   "Receive chunk of transferred file."
   (let ((buffer (cdr (assoc (list sid jid) jabber-ft-sessions))))
     (with-current-buffer buffer
       ;; If data is nil, there is no more data.
       ;; But maybe the remote entity doesn't close the stream -
       ;; then we have to keep track of file size to know when to stop.
+      ;; Return value is whether to keep connection open.
       (when data
 	(insert data))
       (if (and data (< (buffer-size) jabber-ft-size))
 	  t
 	(basic-save-buffer)
-	(message "%s downloaded" (file-name-nondirectory buffer-file-name))))))
+	(if (and jabber-ft-md5-hash
+		 (let ((file-hash (jabber-ft-get-md5 buffer-file-name)))
+		   (and file-hash
+			(not (string= file-hash jabber-ft-md5-hash)))))
+	    ;; hash mismatch!
+	    (progn
+	      (message "%s downloaded - CHECKSUM MISMATCH!"
+		       (file-name-nondirectory buffer-file-name))
+	      (sleep-for 5))
+	  ;; all is fine
+	  (message "%s downloaded" (file-name-nondirectory buffer-file-name)))
+	(kill-buffer buffer)
+	nil))))
 
 (provide 'jabber-ft-server)
 

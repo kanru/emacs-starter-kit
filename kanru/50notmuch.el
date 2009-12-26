@@ -1,7 +1,7 @@
 (require 'notmuch)
 (setq notmuch-folders '(("inbox"           . "tag:inbox")
                         ("unread"          . "tag:unread")
-                        ("apt-listchanges" . "tag:apt-listchanges")
+                        ;; ("apt-listchanges" . "tag:apt-listchanges")
                         ("awesome"         . "tag:awesome")
                         ("awesome-devel"   . "tag:awesome-devel")
                         ("chewing"         . "tag:chewing")
@@ -16,6 +16,8 @@
                         ("madbutterfly"    . "tag:madbutterfly")
                         ("notmuch"         . "tag:notmuch")
                         ("emacs-devel"     . "tag:emacs-devel")
+                        ("golang"          . "tag:golang")
+                        ("archlinux"       . "tag:archlinux")
                         ))
 
 (defun notmuch-mark-as-spam ()
@@ -24,3 +26,4 @@
                                 (notmuch-search-find-thread-id)
                                 "and"
                                 notmuch-search-query-string))
+(global-set-key (kbd "C-c m") 'notmuch-folder)

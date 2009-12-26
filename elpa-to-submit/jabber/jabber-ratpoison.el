@@ -1,6 +1,6 @@
 ;; jabber-ratpoison.el - emacs-jabber interface to ratpoison
 
-;; Copyright (C) 2005 - Magnus Henoch - mange@freemail.hu
+;; Copyright (C) 2005, 2008 - Magnus Henoch - mange@freemail.hu
 
 ;; This file is a part of jabber.el.
 
@@ -18,13 +18,14 @@
 ;; along with this program; if not, write to the Free Software
 ;; Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
+(eval-when-compile (require 'jabber-alert))
+
 (defun jabber-ratpoison-message (msg)
   "Show MSG in Ratpoison"
-  ;; Possible errors include not finding the ratpoison binary, and
-  ;; too many pipes open because of message flood.
+  ;; Possible errors include not finding the ratpoison binary.
   (condition-case e
       (let ((process-connection-type))
-	(start-process "ratpoison" nil "ratpoison" "-c" (concat "echo " msg)))
+	(call-process "ratpoison" nil 0 nil "-c" (concat "echo " msg)))
     (error nil)))
   
 (define-jabber-alert ratpoison "Show a message through the Ratpoison window manager"

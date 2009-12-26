@@ -1,7 +1,7 @@
 ;; jabber.el - a minimal jabber client
 
+;; Copyright (C) 2003, 2004, 2007, 2008 - Magnus Henoch - mange@freemail.hu
 ;; Copyright (C) 2002, 2003, 2004 - tom berger - object@intelectronica.net
-;; Copyright (C) 2003, 2004 - Magnus Henoch - mange@freemail.hu
 
 ;; SSL - Support, mostly inspired by Gnus
 ;; Copyright (C) 2005 - Georg Lehner - jorge@magma.com.ni
@@ -30,27 +30,65 @@
 (defgroup jabber nil "Jabber instant messaging"
   :group 'applications)
 
-(defcustom jabber-username "emacs"
-  "jabber username (user part of JID)" 
-  :type 'string
+;;;###autoload
+(defcustom jabber-account-list nil
+  "List of Jabber accounts.
+Each element of the list is a cons cell describing a Jabber account,
+where the car is a JID and the CDR is an alist.
+
+JID is a full Jabber ID string (e.g. foo@bar.tld). You can also
+specify the resource (e.g. foo@bar.tld/emacs).
+The following keys can be present in the alist:
+:password is a string to authenticate ourself against the server.
+It can be empty.
+:network-server is a string identifying the address to connect to,
+if it's different from the server part of the JID.
+:port is the port to use (default depends on connection type).
+:connection-type is a symbol. Valid symbols are `starttls',
+`network' and `ssl'.
+
+Only JID is mandatory.  The rest can be guessed at run-time.
+
+Examples:
+
+Two accounts without any special configuration:
+\((\"foo@example.com\") (\"bar@example.net\"))
+
+One disabled account with a non-standard port:
+\((\"romeo@montague.net\" (:port . 5242) (:disabled . t)))
+
+If you don't have SRV and STARTTLS capabilities in your Emacs,
+configure a Google Talk account like this:
+\((\"username@gmail.com\" 
+  (:network-server . \"talk.google.com\")
+  (:connection-type . ssl)))"
+  :type '(repeat
+	  (cons :tag "Account information"
+		(string :tag "JID")
+		(set :format "%v"
+		     (cons :format "%v"
+			   (const :format "" :disabled)
+			   (const :tag "Disabled" t))
+		     (cons :format "%v"
+			   (const :format "" :password)
+			   (string :tag "Password"))
+		     (cons :format "%v"
+			   (const :format "" :network-server)
+			   (string :tag "Network server"))
+		     (cons :format "%v"
+			   (const :format "" :port)
+			   (integer :tag "Port" 5222))
+		     (cons :format "%v"
+			   (const :format "" :connection-type)
+			   (choice :tag "Connection type"
+				   ;; XXX: detect whether we have STARTTLS?  option
+				   ;; for enforcing encryption?
+				   (const :tag "STARTTLS" starttls)
+				   (const :tag "Unencrypted" network)
+				   (const :tag "Legacy SSL/TLS" ssl))))))
   :group 'jabber)
 
-(defcustom jabber-server "magaf.org" 
-  "jabber server (domain part of JID)" 
-  :type 'string
-  :group 'jabber)
-
-(defcustom jabber-password nil
-  "jabber password" 
-  :type '(radio (const :tag "Prompt for password" nil)
-		 (string :tag "Save password in .emacs"))
-  :group 'jabber)
-
-(defcustom jabber-resource "emacs"
-  "jabber resource" 
-  :type 'string
-  :group 'jabber)
-
+;;;###autoload
 (defcustom jabber-default-show ""
   "default show state"
   :type '(choice (const :tag "Online" "")
@@ -60,19 +98,16 @@
 		 (const :tag "Do not disturb" "dnd"))
   :group 'jabber)
 
+;;;###autoload
 (defcustom jabber-default-status ""
   "default status string"
   :type 'string
   :group 'jabber)
 
+;;;###autoload
 (defcustom jabber-default-priority 10
   "default priority"
   :type 'integer
-  :group 'jabber)
-
-(defcustom jabber-nickname jabber-username
-  "jabber nickname, used in chat buffer prompts and as default groupchat nickname." 
-  :type 'string
   :group 'jabber)
 
 ;;; guess internal dependencies!
@@ -93,30 +128,46 @@
 (require 'jabber-search)
 (require 'jabber-browse)
 (require 'jabber-muc)
+(require 'jabber-muc-nick-completion)
 (require 'jabber-version)
 (require 'jabber-ahc-presence)
 (require 'jabber-modeline)
-(require 'jabber-keepalive)
 (require 'jabber-watch)
 (require 'jabber-activity)
 (require 'jabber-vcard)
 (require 'jabber-events)
+(require 'jabber-chatstates)
+(require 'jabber-vcard-avatars)
+(require 'jabber-autoaway)
+(require 'jabber-time)
+(require 'jabber-truncate)
 
-;; XXX: automate this some time
-(autoload 'jabber-export-roster "jabber-export"
-  "Create buffer from which roster can be exported to a file."
-  t)
-(autoload 'jabber-import-roster "jabber-export"
-  "Create buffer for roster import from FILE."
-  t)
+(require 'jabber-ft-client)
+(require 'jabber-ft-server)
+(require 'jabber-socks5)
 
-(defvar *jabber-current-status* ""
-  "the users current presence staus")
+;; External notifiers
+(require 'jabber-screen)
+(require 'jabber-ratpoison)
+(require 'jabber-sawfish)
+(require 'jabber-festival)
+(require 'jabber-xmessage)
+(require 'jabber-wmii)
+(require 'jabber-osd)
+(require 'jabber-awesome)
 
-(defvar *jabber-current-show* ""
+(require 'jabber-autoloads)
+
+;;;###autoload
+(defvar *jabber-current-status* nil
+  "the users current presence status")
+
+;;;###autoload
+(defvar *jabber-current-show* nil
   "the users current presence show")
 
-(defvar *jabber-current-priority* 10
+;;;###autoload
+(defvar *jabber-current-priority* nil
   "the user's current priority")
 
 (defvar *jabber-status-history* nil
@@ -143,11 +194,20 @@
 (defgroup jabber-debug nil "debugging options"
   :group 'jabber)
 
+;;;###autoload
 (defcustom jabber-debug-log-xml nil
-  "log all XML i/o in *-jabber-xml-log-*"
+  "log all XML i/o in *-jabber-xml-log-JID-*"
   :type 'boolean
   :group 'jabber-debug)
 
+;;;###autoload
+(defcustom jabber-debug-keep-process-buffers nil
+  "If nil, kill process buffers when the process dies.
+Contents of process buffers might be useful for debugging."
+  :type 'boolean
+  :group 'jabber-debug)
+
+;;;###autoload
 (defconst jabber-presence-faces
  '(("" . jabber-roster-user-online)
    ("away" . jabber-roster-user-away)
@@ -159,20 +219,22 @@
  "Mapping from presence types to faces")
 
 (defconst jabber-presence-strings
-  '(("" . "Online")
-    ("away" . "Away")
-    ("xa" . "Extended Away")
-    ("dnd" . "Do not Disturb")
-    ("chat" . "Chatty")
-    ("error" . "Error")
-    (nil . "Offline"))
-  "Mapping from presence types to readable strings")
+  `(("" . ,(jabber-propertize "Online" 'face 'jabber-roster-user-online))
+    ("away" . ,(jabber-propertize "Away" 'face 'jabber-roster-user-away))
+    ("xa" . ,(jabber-propertize "Extended Away" 'face 'jabber-roster-user-xa))
+    ("dnd" . ,(jabber-propertize "Do not Disturb" 'face 'jabber-roster-user-dnd))
+    ("chat" . ,(jabber-propertize "Chatty" 'face 'jabber-roster-user-chatty))
+    ("error" . ,(jabber-propertize "Error" 'face 'jabber-roster-user-error))
+    (nil . ,(jabber-propertize "Offline" 'face 'jabber-roster-user-offline)))
+  "Mapping from presence types to readable, colorized strings")
 
+;;;###autoload
 (defun jabber-customize ()
   "customize jabber options"
   (interactive)
   (customize-group 'jabber))
 
+;;;###autoload
 (defun jabber-info ()
   "open jabber.el manual"
   (interactive)

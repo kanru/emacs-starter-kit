@@ -21,23 +21,19 @@
 (require 'jabber-iq)
 (require 'jabber-feature-neg)
 
-(defvar jabber-si-client-methods nil
-  "Supported SI stream methods for initiation.
+(require 'jabber-si-common)
 
-Each entry is a list, containing:
- * The namespace URI of the stream method
- * A function taking three arguments: JID, SID and profile function to call")
-
-(defun jabber-si-initiate (jid profile-namespace profile-data profile-function &optional mime-type)
+(defun jabber-si-initiate (jc jid profile-namespace profile-data profile-function &optional mime-type)
   "Try to initiate a stream to JID.
 PROFILE-NAMESPACE is, well, the namespace of the profile to use.
 PROFILE-DATA is the XML data to send within the SI request.
-PROFILE-FUNCTION is the function to call upon success.
+PROFILE-FUNCTION is the \"connection established\" function.
+See `jabber-si-stream-methods'.
 MIME-TYPE is the MIME type to specify.
 Returns the SID."
 
   (let ((sid (apply 'format "emacs-sid-%d.%d.%d" (current-time))))
-    (jabber-send-iq jid "set"
+    (jabber-send-iq jc jid "set"
 		    `(si ((xmlns . "http://jabber.org/protocol/si")
 			  (id . ,sid)
 			  ,(if mime-type
@@ -47,14 +43,14 @@ Returns the SID."
 			 (feature ((xmlns . "http://jabber.org/protocol/feature-neg"))
 				  ,(jabber-fn-encode (list
 						      (cons "stream-method"
-							    (mapcar 'car jabber-si-client-methods)))
+							    (mapcar 'car jabber-si-stream-methods)))
 						     'request)))
 		    #'jabber-si-initiate-process (cons profile-function sid)
 		    ;; XXX: use other function here?
 		    #'jabber-report-success "Stream initiation")
     sid))
 
-(defun jabber-si-initiate-process (xml-data closure-data)
+(defun jabber-si-initiate-process (jc xml-data closure-data)
   "Act on response to our SI query."
 
   (let* ((profile-function (car closure-data))
@@ -64,10 +60,10 @@ Returns the SID."
 	 (feature-node (car (jabber-xml-get-children query 'feature)))
 	 (feature-alist (jabber-fn-parse feature-node 'response))
 	 (chosen-method (cadr (assoc "stream-method" feature-alist)))
-	 (method-data (assoc chosen-method jabber-si-client-methods)))
+	 (method-data (assoc chosen-method jabber-si-stream-methods)))
     ;; Our work is done.  Hand it over to the stream method.
     (let ((stream-negotiate (nth 1 method-data)))
-      (funcall stream-negotiate from sid profile-function))))
+      (funcall stream-negotiate jc from sid profile-function))))
 
 (provide 'jabber-si-client)
 

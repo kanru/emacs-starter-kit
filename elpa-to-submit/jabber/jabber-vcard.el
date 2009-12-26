@@ -1,6 +1,6 @@
 ;;; jabber-vcard.el --- vcards according to JEP-0054
 
-;; Copyright (C) 2005  Magnus Henoch
+;; Copyright (C) 2005, 2007  Magnus Henoch
 
 ;; Author: Magnus Henoch <mange@freemail.hu>
 
@@ -28,7 +28,7 @@
 ;; closely.
 
 ;; Fields not implemented: GEO, LOGO, AGENT, ORG, CATEGORIES, SOUND,
-;; CLASS, KEY, PHOTO.
+;; CLASS, KEY.
 
 ;; The internal data structure used for vCards is an alist.  All
 ;; keys are uppercase symbols.
@@ -66,6 +66,11 @@
 (require 'jabber-core)
 (require 'jabber-widget)
 (require 'jabber-iq)
+(require 'jabber-avatar)
+
+(defvar jabber-vcard-photo nil
+  "The avatar structure for the photo in the vCard edit buffer.")
+(make-variable-buffer-local 'jabber-vcard-photo)
 
 (defun jabber-vcard-parse (vcard)
   "Parse the vCard XML structure given in VCARD.
@@ -165,15 +170,42 @@ The top node should be the `vCard' node."
 			(memq 'X400 types))
 	      (push 'INTERNET types))
 	    
-	    (push (cons types userid) e-mails))))
+    (push (cons types userid) e-mails))))
 
       (when e-mails
 	(push (cons 'EMAIL e-mails) result)))
+
+    ;; JEP-0153: vCard-based avatars
+    (let ((photo-tag (car (jabber-xml-get-children vcard 'PHOTO))))
+      (when photo-tag
+	(let ((type (jabber-xml-path photo-tag '(TYPE "")))
+	      (binval (jabber-xml-path photo-tag '(BINVAL ""))))
+	  (when (and type binval)
+	    (push (list 'PHOTO type binval) result)))))
 
     result))
 
 (defun jabber-vcard-reassemble (parsed)
   "Create a vCard XML structure from PARSED."
+  ;; Save photo in jabber-vcard-photo, to avoid excessive processing.
+  (let ((photo (cdr (assq 'PHOTO parsed))))
+    (cond
+     ;; No photo
+     ((null photo)
+      (setq jabber-vcard-photo nil))
+     ;; Existing photo
+     ((listp photo)
+      (setq jabber-vcard-photo 
+	    (jabber-avatar-from-base64-string 
+	     (nth 1 photo) (nth 0 photo))))
+     ;; New photo from file
+     (t
+      (access-file photo "Avatar file not found")
+      ;; Maximum allowed size is 8 kilobytes
+      (when (> (nth 7 (file-attributes photo)) 8192)
+	(error "Avatar bigger than 8 kilobytes"))
+      (setq jabber-vcard-photo (jabber-avatar-from-file photo)))))
+
   `(vCard ((xmlns . "vcard-temp"))
 	  ;; Put in simple fields
 	  ,@(mapcar
@@ -211,24 +243,30 @@ The top node should be the `vCard' node."
 	       (append '(EMAIL) '(())
 		       (mapcar 'list (car email))
 		       (list (list 'USERID nil (cdr email)))))
-	     (cdr (assq 'EMAIL parsed)))))
+	     (cdr (assq 'EMAIL parsed)))
+	  ;; Put in photo
+	  ,@(when jabber-vcard-photo
+	      `((PHOTO ()
+		       (TYPE () ,(avatar-mime-type jabber-vcard-photo))
+		       (BINVAL () ,(avatar-base64-data jabber-vcard-photo)))))))
 		     
 (add-to-list 'jabber-jid-info-menu
 	     (cons "Request vcard" 'jabber-vcard-get))
 
-(defun jabber-vcard-get (jid)
+(defun jabber-vcard-get (jc jid)
   "Request vcard from JID."
-  (interactive (list (jabber-read-jid-completing "Request vcard from: ")))
-  (jabber-send-iq jid
+  (interactive (list (jabber-read-account)
+		     (jabber-read-jid-completing "Request vcard from: " nil nil nil 'bare-or-muc)))
+  (jabber-send-iq jc jid
 		  "get"
 		  '(vCard ((xmlns . "vcard-temp")))
 		  #'jabber-process-data #'jabber-vcard-display
 		  #'jabber-process-data "Vcard request failed"))
 
-(defun jabber-vcard-edit ()
+(defun jabber-vcard-edit (jc)
   "Edit your own vcard."
-  (interactive)
-  (jabber-send-iq nil
+  (interactive (list (jabber-read-account)))
+  (jabber-send-iq jc nil
 		  "get"
 		  '(vCard ((xmlns . "vcard-temp")))
 		  #'jabber-vcard-do-edit nil
@@ -288,7 +326,7 @@ The top node should be the `vCard' node."
 					(PCODE . "Post code")
 					(CTRY . "Country")))
 
-(defun jabber-vcard-display (xml-data)
+(defun jabber-vcard-display (jc xml-data)
   "Display received vcard."
   (let ((parsed (jabber-vcard-parse (jabber-iq-query xml-data))))
     (dolist (simple-field jabber-vcard-fields)
@@ -350,12 +388,28 @@ The top node should be the `vCard' node."
 	      (when field
 		(insert (cdr address-field))
 		(indent-to 20)
-		(insert (cdr field) "\n")))))))))
+		(insert (cdr field) "\n")))))))
 
-(defun jabber-vcard-do-edit (xml-data closure-data)
-  (let ((parsed (jabber-vcard-parse (jabber-iq-query xml-data))))
+    ;; JEP-0153: vCard-based avatars
+    (let ((photo-type (nth 1 (assq 'PHOTO parsed)))
+	  (photo-binval (nth 2 (assq 'PHOTO parsed))))
+      (when (and photo-type photo-binval)
+	(condition-case nil
+	    ;; ignore the type, let create-image figure it out.
+	    (let ((image (create-image (base64-decode-string photo-binval) nil t)))
+	      (insert-image image "[Photo]")
+	      (insert "\n"))
+	  (error (insert "Couldn't display photo\n")))))))
+
+(defun jabber-vcard-do-edit (jc xml-data closure-data)
+  (let ((parsed (jabber-vcard-parse (jabber-iq-query xml-data)))
+	start-position)
     (with-current-buffer (get-buffer-create "Edit vcard")
       (jabber-init-widget-buffer nil)
+
+      (setq jabber-buffer-connection jc)
+
+      (setq start-position (point))
 
       (dolist (simple-field jabber-vcard-fields)
 	(widget-insert (cdr simple-field))
@@ -448,21 +502,49 @@ The top node should be the `vCard' node."
 	    jabber-widget-alist)
 
       (widget-insert "\n")
+      (widget-insert "Photo/avatar:\n")
+      (let* ((photo (assq 'PHOTO parsed))
+	     (avatar (when photo
+		       (jabber-avatar-from-base64-string (nth 2 photo)
+							 (nth 1 photo)))))
+	(push (cons 
+	       'PHOTO
+	       (widget-create
+		`(radio-button-choice (const :tag "None" nil)
+				      ,@(when photo
+					  (list 
+					   `(const :tag 
+						   ,(concat
+						     "Existing: "
+						     (jabber-propertize " "
+									'display (jabber-avatar-image avatar)))
+						   ,(cdr photo))))
+				      (file :must-match t :tag "From file"))
+		:value (cdr photo)))
+	      jabber-widget-alist))
+
+      (widget-insert "\n")
       (widget-create 'push-button :notify #'jabber-vcard-submit "Submit")
 
       (widget-setup)
       (widget-minor-mode 1)
-      (switch-to-buffer (current-buffer)))))
+      (switch-to-buffer (current-buffer))
+      (goto-char start-position))))
 
 (defun jabber-vcard-submit (&rest ignore)
-  (jabber-send-iq nil
-		  "set"
-		  (jabber-vcard-reassemble
-		   (mapcar (lambda (entry)
-			     (cons (car entry) (widget-value (cdr entry))))
-			   jabber-widget-alist))
-		  #'jabber-report-success "Changing vCard"
-		  #'jabber-report-success "Changing vCard"))
+  (let ((to-publish (jabber-vcard-reassemble
+		     (mapcar (lambda (entry)
+			       (cons (car entry) (widget-value (cdr entry))))
+			     jabber-widget-alist))))
+    (jabber-send-iq jabber-buffer-connection nil
+		    "set"
+		    to-publish
+		    #'jabber-report-success "Changing vCard"
+		    #'jabber-report-success "Changing vCard")
+    (when (bound-and-true-p jabber-vcard-avatars-publish)
+      (jabber-vcard-avatars-update-current
+       jabber-buffer-connection
+       (and jabber-vcard-photo (avatar-sha1-sum jabber-vcard-photo))))))
 
 (provide 'jabber-vcard)
 ;; arch-tag: 65B95E9C-63BD-11D9-94A9-000A95C2FCD0

@@ -1,7 +1,7 @@
 ;; jabber-version.el - version reporting by JEP-0092
 
+;; Copyright (C) 2003, 2004, 2008 - Magnus Henoch - mange@freemail.hu
 ;; Copyright (C) 2002, 2003, 2004 - tom berger - object@intelectronica.net
-;; Copyright (C) 2003, 2004 - Magnus Henoch - mange@freemail.hu
 
 ;; This file is a part of jabber.el.
 
@@ -21,24 +21,23 @@
 
 (require 'jabber-iq)
 (require 'jabber-util)
-
-(defconst jabber-version "0.6.1pre"
-  "version returned to those who query us")
+(require 'jabber-ourversion)
 
 (add-to-list 'jabber-jid-info-menu
 	     (cons "Request software version" 'jabber-get-version))
-(defun jabber-get-version (to)
+(defun jabber-get-version (jc to)
   "Request software version"
-  (interactive (list (jabber-read-jid-completing "Request version of: ")))
-  ;; XXX: you will not get any result unless you add the resource to the JID.
-  (jabber-send-iq to
+  (interactive (list
+		(jabber-read-account)
+		(jabber-read-jid-completing "Request version of: " nil nil nil 'full)))
+  (jabber-send-iq jc to
 		  "get"
 		  '(query ((xmlns . "jabber:iq:version")))
 		  #'jabber-process-data #'jabber-process-version
 		  #'jabber-process-data "Version request failed"))
 
 ;; called by jabber-process-data
-(defun jabber-process-version (xml-data)
+(defun jabber-process-version (jc xml-data)
   "Handle results from jabber:iq:version requests."
   
   (let ((query (jabber-iq-query xml-data)))
@@ -49,7 +48,7 @@
 
 (add-to-list 'jabber-iq-get-xmlns-alist (cons "jabber:iq:version" 'jabber-return-version))
 (add-to-list 'jabber-advertised-features "jabber:iq:version")
-(defun jabber-return-version (xml-data)
+(defun jabber-return-version (jc xml-data)
   "Return client version as defined in JEP-0092.  Sender and ID are
 determined from the incoming packet passed in XML-DATA."
   ;; Things we might check: does this iq message really have type='get' and
@@ -57,13 +56,13 @@ determined from the incoming packet passed in XML-DATA."
   ;; Then again, jabber-process-iq should take care of that.
   (let ((to (jabber-xml-get-attribute xml-data 'from))
 	(id (jabber-xml-get-attribute xml-data 'id)))
-    (jabber-send-iq to "result"
+    (jabber-send-iq jc to "result"
 		    `(query ((xmlns . "jabber:iq:version"))
 			    (name () "jabber.el")
 			    (version () ,jabber-version)
 			    ;; Booting... /vmemacs.el
 			    ;; Shamelessly stolen from someone's sig.
-			    (os () ,(jabber-escape-xml (emacs-version))))
+			    (os () ,(emacs-version)))
 		    nil nil nil nil
 		    id)))
 

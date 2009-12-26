@@ -95,8 +95,23 @@ for indentation at the beginning of the line. But notmuch will
 move past the indentation when testing this pattern, (so that the
 pattern can still test against the entire line).")
 
+(defvar notmuch-show-signature-button-format 
+  "[ %d-line hidden signature. Click/Enter to show ]"
+  "String used to construct button text for hidden signatures
+
+Can use up to one integer format parameter, i.e. %d")
+
+(defvar notmuch-show-citation-button-format 
+  "[ %d-line hidden citation. Click/Enter to show ]"
+  "String used to construct button text for hidden citations.
+
+Can use up to one integer format parameter, i.e. %d")
+
 (defvar notmuch-show-signature-lines-max 12
   "Maximum length of signature that will be hidden by default.")
+
+(defvar notmuch-show-citation-lines-min 4
+  "Minimum length of citation that will be hidden.")
 
 (defvar notmuch-command "notmuch"
   "Command to run the notmuch binary.")
@@ -325,7 +340,9 @@ buffer."
      (lambda (p)
        (let ((disposition (mm-handle-disposition p)))
          (and (listp disposition)
-              (equal (car disposition) "attachment")
+              (or (equal (car disposition) "attachment")
+                  (and (equal (car disposition) "inline")
+                       (assq 'filename disposition)))
               (incf count))))
      mm-handle)
     count))
@@ -335,7 +352,9 @@ buffer."
    (lambda (p)
      (let ((disposition (mm-handle-disposition p)))
        (and (listp disposition)
-            (equal (car disposition) "attachment")
+            (or (equal (car disposition) "attachment")
+                (and (equal (car disposition) "inline")
+                     (assq 'filename disposition)))
             (or (not queryp)
                 (y-or-n-p
                  (concat "Save '" (cdr (assq 'filename disposition)) "' ")))
@@ -636,51 +655,79 @@ which this thread was originally shown."
   'face 'notmuch-message-summary-face
   :supertype 'notmuch-button-invisibility-toggle-type)
 
+(defun notmuch-show-citation-regexp (depth)
+  "Build a regexp for matching citations at a given DEPTH (indent)"
+  (let ((line-regexp (format "[[:space:]]\\{%d\\}*>.*\n" depth)))
+    (concat "\\(?:^" line-regexp 
+	    "\\(?:[[:space:]]*\n" line-regexp
+	    "\\)?\\)+")))
+
+(defun notmuch-show-region-to-button (beg end type prefix button-text)
+  "Auxilary function to do the actual making of overlays and buttons
+
+BEG and END are buffer locations. TYPE should a string, either
+\"citation\" or \"signature\". PREFIX is some arbitrary text to
+insert before the button, probably for indentation.  BUTTON-TEXT
+is what to put on the button."
+
+;; This uses some slightly tricky conversions between strings and
+;; symbols because of the way the button code works. Note that
+;; replacing intern-soft with make-symbol will cause this to fail, 
+;; since the newly created symbol has no plist.
+
+  (let ((overlay (make-overlay beg end))
+	(invis-spec (make-symbol (concat "notmuch-" type "-region")))
+	(button-type (intern-soft (concat "notmuch-button-" 
+					  type "-toggle-type"))))
+    (add-to-invisibility-spec invis-spec)
+    (overlay-put overlay 'invisible invis-spec)
+    (goto-char (1+ end))
+    (save-excursion 
+      (goto-char (1- beg))
+      (insert prefix)
+      (insert-button button-text
+		     'invisibility-spec invis-spec
+		     :type button-type)
+      )))
+
+						 
 (defun notmuch-show-markup-citations-region (beg end depth)
-  (goto-char beg)
-  (beginning-of-line)
-  (while (< (point) end)
-    (let ((beg-sub (point-marker))
-	  (indent (make-string depth ? ))
-	  (citation message-cite-prefix-regexp))
-      (if (looking-at citation)
-	  (progn
-	    (while (looking-at citation)
-	      (forward-line))
-	    (let ((overlay (make-overlay beg-sub (point)))
-                  (invis-spec (make-symbol "notmuch-citation-region")))
-              (add-to-invisibility-spec invis-spec)
-	      (overlay-put overlay 'invisible invis-spec)
-              (let ((p (point))
-                    (cite-button-text
-                     (concat "["  (number-to-string (count-lines beg-sub (point)))
-                             "-line citation.]")))
-                (goto-char (- beg-sub 1))
-                (insert (concat "\n\n" indent))
-                (insert-button cite-button-text
-                               'invisibility-spec invis-spec
-                               :type 'notmuch-button-citation-toggle-type)
-                (goto-char (+ (length cite-button-text) p))
-              ))))
-      (move-to-column depth)
-      (if (looking-at notmuch-show-signature-regexp)
-	  (let ((sig-lines (- (count-lines beg-sub end) 1)))
-	    (if (<= sig-lines notmuch-show-signature-lines-max)
-		(progn
-                  (let ((invis-spec (make-symbol "notmuch-signature-region")))
-                    (add-to-invisibility-spec invis-spec)
-                    (overlay-put (make-overlay beg-sub end)
-                                 'invisible invis-spec)
-                  
-                    (goto-char (- beg-sub 1))
-                    (insert (concat "\n\n" indent))
-                    (let ((sig-button-text (concat "[" (number-to-string sig-lines)
-                                                   "-line signature.]")))
-                      (insert-button sig-button-text 'invisibility-spec invis-spec
-                                     :type 'notmuch-button-signature-toggle-type)
-                     )
-                    (goto-char end))))))
-      (forward-line))))
+  "Markup citations, and up to one signature in the given region"
+  
+  (let ((citation-regexp (notmuch-show-citation-regexp depth))
+	(signature-regexp (concat (format "^[[:space:]]\\{%d\\}" depth) 
+				  notmuch-show-signature-regexp))
+	(indent (make-string depth ? )))
+    (goto-char beg)
+    (beginning-of-line)
+    (while (and (< (point) end) 
+		(re-search-forward citation-regexp end t))
+      (let* ((cite-start (match-beginning 0))
+	     (cite-end 	(match-end 0))
+	     (cite-lines (count-lines cite-start cite-end)))
+	(if (>= cite-lines notmuch-show-citation-lines-min)
+	    (save-excursion
+              (goto-char cite-start)
+              (forward-line notmuch-show-citation-lines-min)
+              (let ((cite-start (point)))
+                (notmuch-show-region-to-button 
+                 cite-start cite-end
+                 "citation"
+                 (concat "\n" indent)
+                 (format notmuch-show-citation-button-format cite-lines)
+                 ))))))
+    (if (re-search-forward signature-regexp end t)
+	(let* ((sig-start (match-beginning 0))
+	       (sig-end (match-end 0))
+	       (sig-lines (1- (count-lines sig-start end))))
+	  (if (<= sig-lines notmuch-show-signature-lines-max)
+	      (notmuch-show-region-to-button 
+	       sig-start
+	       end
+	       "signature"
+	       indent
+	       (format notmuch-show-signature-button-format sig-lines)
+	       ))))))
 
 (defun notmuch-show-markup-part (beg end depth)
   (if (re-search-forward notmuch-show-part-begin-regexp nil t)
@@ -809,15 +856,7 @@ and each reply increases depth by 1)."
       (set-marker subject-end nil)
       (set-marker end nil)
       )
-    btn))
-
-(defun notmuch-show-markup-attachment ()
-  (save-excursion
-    (if (re-search-forward notmuch-show-attachment-begin-regexp nil t)
-        (let ((attachment-begin (match-beginning 0)))
-          (re-search-forward notmuch-show-attachment-end-regexp nil t)
-          (let ((attachment-end (match-beginning 0)))
-            (nm-inline-fontify-region 'diff-mode attachment-begin attachment-end))))))
+  btn))
 
 (defun notmuch-show-markup-message ()
   (if (re-search-forward notmuch-show-message-begin-regexp nil t)
@@ -827,8 +866,7 @@ and each reply increases depth by 1)."
 	      (match (string= "1" (buffer-substring (match-beginning 2) (match-end 2))))
               (btn nil))
 	  (setq btn (notmuch-show-markup-header message-begin depth))
-	  (notmuch-show-markup-body depth match btn)
-          (notmuch-show-markup-attachment)))
+	  (notmuch-show-markup-body depth match btn)))
     (goto-char (point-max))))
 
 (defun notmuch-show-hide-markers ()
@@ -914,10 +952,6 @@ For a mouse binding, return nil."
       (set-buffer-modified-p nil)
       (view-buffer (current-buffer) 'kill-buffer-if-not-modified))))
 
-(defvar notmuch-show-font-lock-keywords
-  `((,(concat "^" message-cite-prefix-regexp ".*$") 0 'message-cited-text))
-  "")
-
 ;;;###autoload
 (defun notmuch-show-mode ()
   "Major mode for viewing a thread with notmuch.
@@ -956,10 +990,7 @@ All currently available key bindings:
   (use-local-map notmuch-show-mode-map)
   (setq major-mode 'notmuch-show-mode
 	mode-name "notmuch-show")
-  (setq buffer-read-only t)
-  ;;(set (make-local-variable 'font-lock-defaults)
-  ;;     '(notmuch-show-font-lock-keywords t))
-  )
+  (setq buffer-read-only t))
 
 (defgroup notmuch nil
   "Notmuch mail reader for Emacs."
@@ -988,15 +1019,17 @@ All currently available key bindings:
 	  (lambda()
 	    (hl-line-mode 1) ))
 
-(defun notmuch-show (thread-id &optional parent-buffer)
+(defun notmuch-show (thread-id &optional parent-buffer query-context)
   "Run \"notmuch show\" with the given thread ID and display results.
 
 The optional PARENT-BUFFER is the notmuch-search buffer from
 which this notmuch-show command was executed, (so that the next
-thread from that buffer can be show when done with this one)."
+thread from that buffer can be show when done with this one).
+
+The optional QUERY-CONTEXT is a notmuch search term. Only messages from the thread 
+matching this search term are shown if non-nil. "
   (interactive "sNotmuch show: ")
-  (let ((query notmuch-search-query-string)
-	(buffer (get-buffer-create (concat "*notmuch-show-" thread-id "*"))))
+  (let ((buffer (get-buffer-create (concat "*notmuch-show-" thread-id "*"))))
     (switch-to-buffer buffer)
     (notmuch-show-mode)
     (set (make-local-variable 'notmuch-show-parent-buffer) parent-buffer)
@@ -1008,7 +1041,11 @@ thread from that buffer can be show when done with this one)."
       (erase-buffer)
       (goto-char (point-min))
       (save-excursion
-	(call-process notmuch-command nil t nil "show" "--entire-thread" thread-id "and (" query ")")
+	(let* ((basic-args (list notmuch-command nil t nil "show" "--entire-thread" thread-id))
+		(args (if query-context (append basic-args (list "and (" query-context ")")) basic-args)))
+	  (apply 'call-process args)
+	  (when (and (eq (buffer-size) 0) query-context)
+	    (apply 'call-process basic-args)))
 	(notmuch-show-markup-messages)
 	)
       (run-hooks 'notmuch-show-hook)
@@ -1172,12 +1209,20 @@ Complete list of currently available key bindings:
   "Return the thread for the current thread"
   (get-text-property (point) 'notmuch-search-thread-id))
 
+(defun notmuch-search-find-authors ()
+  "Return the authors for the current thread"
+  (get-text-property (point) 'notmuch-search-authors))
+
+(defun notmuch-search-find-subject ()
+  "Return the subject for the current thread"
+  (get-text-property (point) 'notmuch-search-subject))
+
 (defun notmuch-search-show-thread ()
   "Display the currently selected thread."
   (interactive)
   (let ((thread-id (notmuch-search-find-thread-id)))
     (if (> (length thread-id) 0)
-	(notmuch-show thread-id (current-buffer))
+	(notmuch-show thread-id (current-buffer) notmuch-search-query-string)
       (error "End of search results"))))
 
 (defun notmuch-search-reply-to-thread ()
@@ -1232,7 +1277,7 @@ The tag is added to messages in the currently selected thread
 which match the current search terms."
   (interactive
    (list (notmuch-select-tag-with-completion "Tag to add: ")))
-  (notmuch-call-notmuch-process "tag" (concat "+" tag) (notmuch-search-find-thread-id) " and " notmuch-search-query-string)
+  (notmuch-call-notmuch-process "tag" (concat "+" tag) (notmuch-search-find-thread-id))
   (notmuch-search-set-tags (delete-dups (sort (cons tag (notmuch-search-get-tags)) 'string<))))
 
 (defun notmuch-search-remove-tag (tag)
@@ -1242,7 +1287,7 @@ The tag is removed from messages in the currently selected thread
 which match the current search terms."
   (interactive
    (list (notmuch-select-tag-with-completion "Tag to remove: " (notmuch-search-find-thread-id))))
-  (notmuch-call-notmuch-process "tag" (concat "-" tag) (notmuch-search-find-thread-id) " and " notmuch-search-query-string)
+  (notmuch-call-notmuch-process "tag" (concat "-" tag) (notmuch-search-find-thread-id))
   (notmuch-search-set-tags (delete tag (notmuch-search-get-tags))))
 
 (defun notmuch-search-archive-thread ()
@@ -1296,7 +1341,9 @@ This function advances the next thread when finished."
 		      (goto-char (point-max))
 		      (let ((beg (point-marker)))
 			(insert (format "%s %-7s %-40s %s (%s)\n" date count authors subject tags))
-			(put-text-property beg (point-marker) 'notmuch-search-thread-id thread-id))
+			(put-text-property beg (point-marker) 'notmuch-search-thread-id thread-id)
+			(put-text-property beg (point-marker) 'notmuch-search-authors authors)
+			(put-text-property beg (point-marker) 'notmuch-search-subject subject))
 		      (set 'line (match-end 0)))
 		  (set 'more nil))))))
       (delete-process proc))))
@@ -1516,14 +1563,18 @@ Currently available key bindings:
       (backward-char)
       (filter-buffer-substring beg (point)))))
 
-(defun notmuch-folder-show-search (&optional folder)
+(defun notmuch-folder-show-search (&optional unread)
   "Show a search window for the search related to the specified folder."
-  (interactive)
-  (if (null folder)
-      (setq folder (notmuch-folder-find-name)))
-  (let ((search (assoc folder notmuch-folders)))
+  (interactive "P")
+  ;(if (null folder)
+  ;    (setq folder (notmuch-folder-find-name)))
+  (let* ((folder (notmuch-folder-find-name))
+         (search (assoc folder notmuch-folders)))
     (if search
-	(notmuch-search (cdr search) notmuch-search-oldest-first))))
+	(if (null unread)
+            (notmuch-search (concat (cdr search) " AND tag:unread") notmuch-search-oldest-first)
+          (notmuch-search (cdr search) notmuch-search-oldest-first)
+          ))))
 
 ;;;###autoload
 (defun notmuch-folder ()

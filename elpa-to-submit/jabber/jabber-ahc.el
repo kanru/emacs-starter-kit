@@ -1,7 +1,7 @@
 ;; jabber-ahc.el - Ad-Hoc Commands by JEP-0050
 
+;; Copyright (C) 2003, 2004, 2007, 2008 - Magnus Henoch - mange@freemail.hu
 ;; Copyright (C) 2002, 2003, 2004 - tom berger - object@intelectronica.net
-;; Copyright (C) 2003, 2004 - Magnus Henoch - mange@freemail.hu
 
 ;; This file is a part of jabber.el.
 
@@ -21,6 +21,7 @@
 
 (require 'jabber-disco)
 (require 'jabber-widget)
+(require 'jabber-autoloads)
 
 (defvar jabber-ahc-sessionid nil
   "session id of Ad-Hoc Command session")
@@ -35,11 +36,12 @@ This is an alist, where the keys are node names as strings (which
 means that they must not conflict).  The values are plists having
 following properties:
 
-acl	- function taking JID as single argument, return non-nil for
-	  access allowed.  No function means open for everyone.
+acl     - function taking connection object and JID of requester,
+	  returning non-nil for access allowed.  No function means
+          open for everyone.
 name	- name of command
-func	- function receiving entire IQ stanza as single argument
-	  and returning a <command/> node
+func	- function taking connection object and entire IQ stanza as 
+          arguments and returning a <command/> node
 
 Use the function `jabber-ahc-add' to add a command to this list.")
 
@@ -75,9 +77,9 @@ access allowed.  nil means open for everyone."
 			    (feature ((var . "jabber:x:data")))))))
 
 (add-to-list 'jabber-advertised-features "http://jabber.org/protocol/commands")
-(add-to-list 'jabber-disco-items-nodes 
+(add-to-list 'jabber-disco-items-nodes
 	     (list "http://jabber.org/protocol/commands" #'jabber-ahc-disco-items nil))
-(defun jabber-ahc-disco-items (xml-data)
+(defun jabber-ahc-disco-items (jc xml-data)
   "Return commands in response to disco#items request"
   (let ((jid (jabber-xml-get-attribute xml-data 'from)))
     (mapcar (function
@@ -88,15 +90,15 @@ access allowed.  nil means open for everyone."
 		       (name (plist-get plist 'name))
 		       (func (plist-get plist 'func)))
 		   (when (or (not (functionp acl))
-			     (funcall acl jid))
+			     (funcall acl jc jid))
 		     `(item ((name . ,name)
-			     (jid . ,(format "%s@%s/%s" jabber-username jabber-server jabber-resource))
+			     (jid . ,(jabber-connection-jid jc))
 			     (node . ,node))))))))
 	    jabber-ahc-commands)))
 
 (add-to-list 'jabber-iq-set-xmlns-alist
 	     (cons "http://jabber.org/protocol/commands" 'jabber-ahc-process))
-(defun jabber-ahc-process (xml-data)
+(defun jabber-ahc-process (jc xml-data)
 
   (let ((to (jabber-xml-get-attribute xml-data 'from))
 	(id (jabber-xml-get-attribute xml-data 'id))
@@ -108,10 +110,10 @@ access allowed.  nil means open for everyone."
       (if plist
 	  ;; found
 	  (if (or (not (functionp acl))
-		  (funcall acl to))
+		  (funcall acl jc to))
 	      ;; access control passed
-	      (jabber-send-iq to "result"
-			      (funcall func xml-data)
+	      (jabber-send-iq jc to "result"
+			      (funcall func jc xml-data)
 			      nil nil nil nil id)
 	    ;; ...or failed
 	    (jabber-signal-error "cancel" 'not-allowed))
@@ -121,18 +123,20 @@ access allowed.  nil means open for everyone."
 ;;; CLIENT
 (add-to-list 'jabber-jid-service-menu
 	     (cons "Request command list" 'jabber-ahc-get-list))
-(defun jabber-ahc-get-list (to)
+(defun jabber-ahc-get-list (jc to)
   "Request list of ad-hoc commands.  (JEP-0050)"
-  (interactive (list (jabber-read-jid-completing "Request command list from: ")))
-  (jabber-get-disco-items to "http://jabber.org/protocol/commands"))
+  (interactive (list (jabber-read-account)
+		     (jabber-read-jid-completing "Request command list from: ")))
+  (jabber-get-disco-items jc to "http://jabber.org/protocol/commands"))
 
 (add-to-list 'jabber-jid-service-menu
 	     (cons "Execute command" 'jabber-ahc-execute-command))
-(defun jabber-ahc-execute-command (to node)
+(defun jabber-ahc-execute-command (jc to node)
   "Execute ad-hoc command.  (JEP-0050)"
-  (interactive (list (jabber-read-jid-completing "Execute command of: ")
+  (interactive (list (jabber-read-account)
+		     (jabber-read-jid-completing "Execute command of: ")
 		     (jabber-read-node "Node of command: ")))
-  (jabber-send-iq to
+  (jabber-send-iq jc to
 		  "set"
 		  `(command ((xmlns . "http://jabber.org/protocol/commands")
 			     (node . ,node)
@@ -140,7 +144,7 @@ access allowed.  nil means open for everyone."
 		  #'jabber-process-data #'jabber-ahc-display
 		  #'jabber-process-data "Command execution failed"))
 
-(defun jabber-ahc-display (xml-data)
+(defun jabber-ahc-display (jc xml-data)
   (let* ((from (jabber-xml-get-attribute xml-data 'from))
 	 (query (jabber-iq-query xml-data))
 	 (node (jabber-xml-get-attribute query 'node))
@@ -155,6 +159,8 @@ access allowed.  nil means open for everyone."
     (setq jabber-ahc-sessionid sessionid)
     (make-local-variable 'jabber-ahc-node)
     (setq jabber-ahc-node node)
+    (make-local-variable 'jabber-buffer-connection)
+    (setq jabber-buffer-connection jc)
 
     (dolist (x (jabber-xml-get-children query 'x))
       (when (string= (jabber-xml-get-attribute x 'xmlns) "jabber:x:data")
@@ -187,7 +193,7 @@ access allowed.  nil means open for everyone."
 	  (jabber-render-xdata-form xdata)
 
 	  (when (string= status "executing")
-	    (let ((button-titles 
+	    (let ((button-titles
 		   (cond
 		    ((null actions)
 		     '(complete cancel))
@@ -208,7 +214,7 @@ access allowed.  nil means open for everyone."
 (defun jabber-ahc-submit (action)
   "Submit Ad-Hoc Command."
 
-  (jabber-send-iq jabber-submit-to
+  (jabber-send-iq jabber-buffer-connection jabber-submit-to
 		  "set"
 		  `(command ((xmlns . "http://jabber.org/protocol/commands")
 			     (sessionid . ,jabber-ahc-sessionid)

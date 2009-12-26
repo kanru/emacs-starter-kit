@@ -1,1 +1,1 @@
-(cua-mode t)
+;(cua-mode t)

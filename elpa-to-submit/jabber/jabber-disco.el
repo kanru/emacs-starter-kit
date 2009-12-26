@@ -1,7 +1,7 @@
 ;; jabber-disco.el - service discovery functions
 
+;; Copyright (C) 2003, 2004, 2007, 2008 - Magnus Henoch - mange@freemail.hu
 ;; Copyright (C) 2002, 2003, 2004 - tom berger - object@intelectronica.net
-;; Copyright (C) 2003, 2004 - Magnus Henoch - mange@freemail.hu
 
 ;; This file is a part of jabber.el.
 
@@ -46,7 +46,7 @@ called and its return value is used; if it is a list, that list is
 used.  The list should be the XML data to be returned inside the
 <query/> element, like this:
 
-((item ((name . \"Name of first item\")
+\((item ((name . \"Name of first item\")
 	(jid . \"first.item\")
 	(node . \"node\"))))
 
@@ -66,7 +66,7 @@ called and its return value is used; if it is a list, that list is
 used.  The list should be the XML data to be returned inside the
 <query/> element, like this:
 
-((identity ((category . \"client\")
+\((identity ((category . \"client\")
 	    (type . \"pc\")
 	    (name . \"Jabber client\")))
  (feature ((var . \"some-feature\"))))
@@ -75,7 +75,7 @@ Second item is access control function.  That function is passed the
 JID, and returns non-nil if access is granted.  If the second item is
 nil, access is always granted.")
 
-(defun jabber-process-disco-info (xml-data)
+(defun jabber-process-disco-info (jc xml-data)
   "Handle results from info disco requests."
 
   (let ((beginning (point)))
@@ -86,9 +86,9 @@ nil, access is always granted.")
 	      (category (jabber-xml-get-attribute x 'category))
 	      (type (jabber-xml-get-attribute x 'type)))
 	  (insert (jabber-propertize (if name
-				  (jabber-unescape-xml name)
-				  "Unnamed")
-			      'face 'jabber-title-medium)
+					 name
+				       "Unnamed")
+				     'face 'jabber-title-medium)
 		  "\n\nCategory:\t" category "\n")
 	  (if type
 	      (insert "Type:\t\t" type "\n"))
@@ -96,9 +96,12 @@ nil, access is always granted.")
        ((eq (jabber-xml-node-name x) 'feature)
 	(let ((var (jabber-xml-get-attribute x 'var)))
 	  (insert "Feature:\t" var "\n")))))
-    (put-text-property beginning (point) 'jabber-jid (jabber-xml-get-attribute xml-data 'from))))
+    (put-text-property beginning (point) 
+		       'jabber-jid (jabber-xml-get-attribute xml-data 'from))
+    (put-text-property beginning (point)
+		       'jabber-account jc)))
 
-(defun jabber-process-disco-items (xml-data)
+(defun jabber-process-disco-items (jc xml-data)
   "Handle results from items disco requests."
 
   (let ((items (jabber-xml-get-children (jabber-iq-query xml-data) 'item)))
@@ -113,8 +116,9 @@ nil, access is always granted.")
 	       (jabber-propertize
 		(concat jid "\n" (if node (format "Node: %s\n" node)))
 		'face 'jabber-title-medium)
-	       (jabber-unescape-xml name) "\n\n")
+	       name "\n\n")
 	      'jabber-jid jid
+	      'jabber-account jc
 	      'jabber-node node))))
       (insert "No items found.\n"))))
 
@@ -122,7 +126,7 @@ nil, access is always granted.")
 	     (cons "http://jabber.org/protocol/disco#info" 'jabber-return-disco-info))
 (add-to-list 'jabber-iq-get-xmlns-alist
 	     (cons "http://jabber.org/protocol/disco#items" 'jabber-return-disco-info))
-(defun jabber-return-disco-info (xml-data)
+(defun jabber-return-disco-info (jc xml-data)
   "Respond to a service discovery request.
 See JEP-0030."
   (let* ((to (jabber-xml-get-attribute xml-data 'from))
@@ -140,21 +144,23 @@ See JEP-0030."
 	 (access-control (nth 1 return-list)))
     (if return-list
 	(if (and (functionp access-control)
-		 (not (funcall access-control to)))
+		 (not (funcall access-control jc to)))
 	    (jabber-signal-error "cancel" 'not-allowed)
 	  ;; Access control passed
 	  (let ((result (if (functionp func)
-			    (funcall func xml-data)
+			    (funcall func jc xml-data)
 			  func)))
-	    (jabber-send-iq to "result"
-			    `(query ((xmlns . ,xmlns))
+	    (jabber-send-iq jc to "result"
+			    `(query ((xmlns . ,xmlns)
+				     ,@(when node
+					 (list (cons 'node node))))
 				    ,@result)
 			    nil nil nil nil id)))
 
       ;; No such node
       (jabber-signal-error "cancel" 'item-not-found))))
 
-(defun jabber-disco-return-client-info (xml-data)
+(defun jabber-disco-return-client-info (jc xml-data)
   `(
     ;; If running under a window system, this is
     ;; a GUI client.  If not, it is a console client.
@@ -171,11 +177,12 @@ See JEP-0030."
 	
 (add-to-list 'jabber-jid-info-menu
 	     (cons "Send items disco query" 'jabber-get-disco-items))
-(defun jabber-get-disco-items (to &optional node)
+(defun jabber-get-disco-items (jc to &optional node)
   "Send a service discovery request for items"
-  (interactive (list (jabber-read-jid-completing "Send items disco request to: ")
+  (interactive (list (jabber-read-account)
+		     (jabber-read-jid-completing "Send items disco request to: ")
 		     (jabber-read-node "Node (or leave empty): ")))
-  (jabber-send-iq to
+  (jabber-send-iq jc to
 		  "get"
 		  (list 'query (append (list (cons 'xmlns "http://jabber.org/protocol/disco#items"))
 				       (if (> (length node) 0)
@@ -185,11 +192,12 @@ See JEP-0030."
 
 (add-to-list 'jabber-jid-info-menu
 	     (cons "Send info disco query" 'jabber-get-disco-info))
-(defun jabber-get-disco-info (to &optional node)
+(defun jabber-get-disco-info (jc to &optional node)
   "Send a service discovery request for info"
-  (interactive (list (jabber-read-jid-completing "Send info disco request to: ")
+  (interactive (list (jabber-read-account)
+		     (jabber-read-jid-completing "Send info disco request to: ")
 		     (jabber-read-node "Node (or leave empty): ")))
-  (jabber-send-iq to
+  (jabber-send-iq jc to
 		  "get"
 		  (list 'query (append (list (cons 'xmlns "http://jabber.org/protocol/disco#info"))
 				       (if (> (length node) 0)

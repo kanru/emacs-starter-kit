@@ -1,7 +1,7 @@
 ;; jabber-widget.el - display various kinds of forms
 
+;; Copyright (C) 2003, 2004, 2007 - Magnus Henoch - mange@freemail.hu
 ;; Copyright (C) 2002, 2003, 2004 - tom berger - object@intelectronica.net
-;; Copyright (C) 2003, 2004 - Magnus Henoch - mange@freemail.hu
 
 ;; This file is a part of jabber.el.
 
@@ -37,6 +37,47 @@
 
 (add-to-list 'jabber-advertised-features "jabber:x:data")
 
+(define-widget 'jid 'string
+  "JID widget."
+  :value-to-internal (lambda (widget value)
+		       (let ((displayname (jabber-jid-rostername value)))
+			 (if displayname
+			     (format "%s <%s>" displayname value)
+			   value)))
+  :value-to-external (lambda (widget value)
+		       (if (string-match "<\\([^>]+\\)>[ \t]*$" value)
+			   (match-string 1 value)
+			 value))
+  :complete-function 'jid-complete)
+
+(defun jid-complete ()
+  "Perform completion on JID preceding point."
+  (interactive)
+  ;; mostly stolen from widget-color-complete
+  (let* ((prefix (buffer-substring-no-properties (widget-field-start widget)
+						 (point)))
+	 (list (append (mapcar #'symbol-name *jabber-roster*)
+		       (delq nil
+			     (mapcar #'(lambda (item)
+					 (when (jabber-jid-rostername item)
+					   (format "%s <%s>" (jabber-jid-rostername item)
+						   (symbol-name item))))
+				     *jabber-roster*))))
+	 (completion (try-completion prefix list)))
+    (cond ((eq completion t)
+	   (message "Exact match."))
+	  ((null completion)
+	   (error "Can't find completion for \"%s\"" prefix))
+	  ((not (string-equal prefix completion))
+	   (insert-and-inherit (substring completion (length prefix))))
+	  (t
+	   (message "Making completion list...")
+	   (with-output-to-temp-buffer "*Completions*"
+	     (display-completion-list (all-completions prefix list nil)
+				      prefix))
+	   (message "Making completion list...done")))))
+
+
 (defun jabber-init-widget-buffer (submit-to)
   "Setup buffer-local variables for widgets."
   (make-local-variable 'jabber-widget-alist)
@@ -50,8 +91,9 @@
   ;; better way.
   (rename-uniquely))
 
-(defun jabber-render-register-form (query)
-  "Display widgets from <query/> element in jabber:iq:{register,search} namespace."
+(defun jabber-render-register-form (query &optional default-username)
+  "Display widgets from <query/> element in jabber:iq:{register,search} namespace.
+DEFAULT-USERNAME is the default value for the username field."
   (make-local-variable 'jabber-widget-alist)
   (setq jabber-widget-alist nil)
   (make-local-variable 'jabber-form-type)
@@ -86,10 +128,9 @@
 	  ;; Special case: when registering a new account, the default
 	  ;; username is the one specified in jabber-username.  Things
 	  ;; will break if the user changes that name, though...
-	  (let ((default-value (if (and jabber-register-p
-					(eq (jabber-xml-node-name field) 'username))
-				   jabber-username
-				 "")))
+	  (let ((default-value (or (when (eq (jabber-xml-node-name field) 'username)
+				     default-username)
+				   "")))
 	    (setq jabber-widget-alist 
 		  (cons
 		   (cons (car entry)

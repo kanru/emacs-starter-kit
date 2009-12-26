@@ -1,7 +1,7 @@
 ;; jabber-history.el - recording message history
 
+;; Copyright (C) 2004, 2007, 2008 - Magnus Henoch - mange@freemail.hu
 ;; Copyright (C) 2004 - Mathias Dahl
-;; Copyright (C) 2004 - Magnus Henoch - mange@freemail.hu
 
 ;; This file is a part of jabber.el.
 
@@ -32,6 +32,8 @@
 ;; enough backlog entries.
 
 (require 'jabber-core)
+(require 'jabber-util)
+(require 'jabber-autoloads)
 
 (defgroup jabber-history nil "Customization options for Emacs
 Jabber history files."
@@ -95,7 +97,7 @@ Jabber history files."
       (rename-file history-file (concat history-file "-" suffix)))))
 
 (add-to-list 'jabber-message-chain 'jabber-message-history)
-(defun jabber-message-history (xml-data)
+(defun jabber-message-history (jc xml-data)
   "Log message to log file."
   (when (and (not jabber-use-global-history)
 	     (not (file-directory-p jabber-history-dir)))
@@ -125,7 +127,9 @@ Jabber history files."
   loggin strategy is used or the global history filename."
   (if jabber-use-global-history
       jabber-global-history-filename
-    (concat jabber-history-dir "/" (jabber-jid-user contact))))
+    ;; jabber-jid-symbol is the best canonicalization we have.
+    (concat jabber-history-dir 
+	    "/" (symbol-name (jabber-jid-symbol contact)))))
 
 (defun jabber-history-log-message (direction from to body timestamp)
   "Log a message"
@@ -139,14 +143,16 @@ Jabber history files."
       (setq body (replace-match "\\n" nil t body nil)))
     (while (string-match "\r" body)
       (setq body (replace-match "\\r" nil t body nil)))
-    (insert (format "[\"%s\" \"%s\" \"%s\" \"%s\" %s]\n"
+    (insert (format "[\"%s\" \"%s\" %s %s %s]\n"
 		    (jabber-encode-time (or timestamp (current-time)))
 		    (or direction
 			"in")
-		    (or from
-			"me")
-		    (or to
-			"me")
+		    (or (when from
+			  (prin1-to-string from))
+			"\"me\"")
+		    (or (when to
+			  (prin1-to-string to))
+			"\"me\"")
 		    body))
     (let ((coding-system-for-write 'utf-8)
 	  (history-file (jabber-history-filename (or from to))))
@@ -155,7 +161,10 @@ Jabber history files."
 	(make-directory jabber-history-dir))
       (when (jabber-rotate-history-p history-file)
 	(jabber-history-rotate history-file))
-      (write-region (point-min) (point-max) history-file t 'quiet))))
+      (condition-case e
+	  (write-region (point-min) (point-max) history-file t 'quiet)
+	(error
+	 (message "Unable to write history: %s" (error-message-string e)))))))
 
 (defun jabber-history-query (start-time
 			     end-time
@@ -177,7 +186,19 @@ of the log file."
   (when (file-readable-p history-file)
     (with-temp-buffer
       (let ((coding-system-for-read 'utf-8))
-	(insert-file-contents history-file))
+	(if jabber-use-global-history
+            (insert-file-contents history-file)
+          (let* ((lines-collected nil)
+                (matched-files (directory-files jabber-history-dir t (file-name-nondirectory history-file)))
+                (matched-files (cons (car matched-files) (sort (cdr matched-files) 'string>-numerical))))
+            (while (not lines-collected)
+              (if (null matched-files)
+                  (setq lines-collected t)
+                (let ((file (pop matched-files)))
+                  (progn
+                    (insert-file-contents file)
+                    (if (>= (count-lines (point-min) (point-max)) number)
+                        (setq lines-collected t)))))))))
       (let (collected current-line)
 	(goto-char (point-max))
 	(catch 'beginning-of-file
@@ -229,7 +250,6 @@ Return a list of history entries (vectors), limited by
 If BEFORE is non-nil, it should be a float-time after which
 no entries will be fetched.  `jabber-backlog-days' still
 applies, though."
-  (interactive)
   (jabber-history-query 
    (and jabber-backlog-days
 	(- (jabber-float-time) (* jabber-backlog-days 86400.0)))
@@ -239,6 +259,48 @@ applies, though."
    (concat "^" (regexp-quote (jabber-jid-user jid)) "\\(/.*\\)?$")
    (jabber-history-filename jid)))
 
+(defun jabber-history-move-to-per-user ()
+  "Migrate global history to per-user files."
+  (interactive)
+  (when (file-directory-p jabber-history-dir)
+    (error "Per-user history directory already exists"))
+  (make-directory jabber-history-dir)
+  (let ((jabber-use-global-history nil))
+    (with-temp-buffer
+      (let ((coding-system-for-read 'utf-8))
+	(insert-file-contents jabber-global-history-filename))
+      (let ((progress-reporter
+	     (when (fboundp 'make-progress-reporter)
+	       (make-progress-reporter "Migrating history..."
+				       (point-min) (point-max))))
+	    ;;(file-table (make-hash-table :test 'equal))
+	    ;; Keep track of blocks of entries pertaining to the same JID.
+	    current-jid jid-start)
+	(while (not (eobp))
+	  (let* ((start (point))
+		 (end (progn (forward-line) (point)))
+		 (line (buffer-substring start end))
+		 (parsed (car (read-from-string line)))
+		 (jid (if (string= (aref parsed 2) "me")
+			  (aref parsed 3)
+			(aref parsed 2))))
+	    ;; Whenever there is a change in JID...
+	    (when (not (equal jid current-jid))
+	      (when current-jid
+		;; ...save data for previous JID...
+		(let ((history-file (jabber-history-filename current-jid)))
+		  (write-region jid-start start history-file t 'quiet)))
+	      ;; ...and switch to new JID.
+	      (setq current-jid jid)
+	      (setq jid-start start))
+	    (when (fboundp 'progress-reporter-update)
+	      (progress-reporter-update progress-reporter (point)))))
+	;; Finally, save the last block, if any.
+	(when current-jid
+	  (let ((history-file (jabber-history-filename current-jid)))
+	    (write-region jid-start (point-max) history-file t 'quiet))))))
+  (message "Done.  Please change `jabber-use-global-history' now."))
+	
 (provide 'jabber-history)
 
 ;; arch-tag: 0AA0C235-3FC0-11D9-9FE7-000A95C2FCD0

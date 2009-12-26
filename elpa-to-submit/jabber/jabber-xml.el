@@ -1,7 +1,7 @@
 ;; jabber-xml.el - XML functions
 
+;; Copyright (C) 2003, 2004, 2007, 2008 - Magnus Henoch - mange@freemail.hu
 ;; Copyright (C) 2002, 2003, 2004 - tom berger - object@intelectronica.net
-;; Copyright (C) 2003, 2004 - Magnus Henoch - mange@freemail.hu
 
 ;; This file is a part of jabber.el.
 
@@ -58,7 +58,7 @@
   "converts an SEXP in the format (tagname ((attribute-name . attribute-value)...) children...) and converts it to well-formatted xml."
   (cond
    ((stringp sexp)
-    sexp)
+    (jabber-escape-xml sexp))
    ((listp (car sexp))
     (let ((xml ""))
       (dolist (tag sexp)
@@ -79,7 +79,7 @@
 	    (setq xml (concat xml
 			      (format " %s='%s'"
 				      (symbol-name (car attr))
-				      (cdr attr))))))
+				      (jabber-escape-xml (cdr attr)))))))
       (if (cddr sexp)
 	  (progn
 	    (setq xml (concat xml ">"))
@@ -94,16 +94,22 @@
 			  "/>")))
       xml))))
 
-(defun jabber-xml-skip-tag-forward ()
+(defun jabber-xml-skip-tag-forward (&optional dont-recurse-into-stream)
   "Skip to end of tag or matching closing tag if present.
 Return t iff after a closing tag, otherwise throws an 'unfinished
 tag with value nil.
+If DONT-RECURSE-INTO-STREAM is true, stop after an opening
+<stream:stream> tag.
 
 The version of `sgml-skip-tag-forward' in Emacs 21 isn't good
 enough for us."
   (skip-chars-forward "^<")
-  (if (not (looking-at "<\\([^ \t\n/>]+\\)\\([ \t\n]+[^=]+='[^']*'\\|[ \t\n]+[^=]+=\"[^\"]*\"\\)*"))
-      (throw 'unfinished nil)
+  (cond
+   ((looking-at "<!\\[CDATA\\[")
+    (if (search-forward "]]>" nil t)
+	(goto-char (match-end 0))
+      (throw 'unfinished nil)))
+   ((looking-at "<\\([^ \t\n/>]+\\)\\([ \t\n]+[^=]+='[^']*'\\|[ \t\n]+[^=]+=\"[^\"]*\"\\)*")
     (let ((node-name (match-string 1)))
       (goto-char (match-end 0))
       (cond
@@ -112,14 +118,17 @@ enough for us."
 	t)
        ((looking-at ">")
 	(forward-char 1)
-	(loop 
-	 do (skip-chars-forward "^<")
-	 until (looking-at (regexp-quote (concat "</" node-name ">")))
-	 do (jabber-xml-skip-tag-forward))
-	(goto-char (match-end 0))
+	(unless (and dont-recurse-into-stream (equal node-name "stream:stream"))
+	  (loop 
+	   do (skip-chars-forward "^<")
+	   until (looking-at (regexp-quote (concat "</" node-name ">")))
+	   do (jabber-xml-skip-tag-forward))
+	  (goto-char (match-end 0)))
 	t)
        (t
-	(throw 'unfinished nil))))))
+	(throw 'unfinished nil)))))
+   (t
+    (throw 'unfinished nil))))
 
 (defsubst jabber-xml-node-name (node)
   "Return the tag associated with NODE.
@@ -153,13 +162,23 @@ CHILD-NAME should be a lower case symbol."
 ;; `xml-get-attribute' returns "" if the attribute is not found, which
 ;; is not very useful.  Therefore, we use `xml-get-attribute-or-nil'
 ;; if present, or emulate its behavior.
-(if (fboundp 'xml-get-attribute-or-nil)
-    (defalias 'jabber-xml-get-attribute 'xml-get-attribute-or-nil)
-  (defsubst jabber-xml-get-attribute (node attribute)
-    "Get from NODE the value of ATTRIBUTE.
+(eval-and-compile
+  (if (fboundp 'xml-get-attribute-or-nil)
+      (defsubst jabber-xml-get-attribute (node attribute)
+	"Get from NODE the value of ATTRIBUTE.
 Return nil if the attribute was not found."
-    (let ((result (xml-get-attribute node attribute)))
-      (and (> (length result) 0) result))))
+	(when (consp node)
+	  (xml-get-attribute-or-nil node attribute)))
+    (defsubst jabber-xml-get-attribute (node attribute)
+      "Get from NODE the value of ATTRIBUTE.
+Return nil if the attribute was not found."
+      (when (consp node)
+	(let ((result (xml-get-attribute node attribute)))
+	  (and (> (length result) 0) result))))))
+
+(defsubst jabber-xml-get-xmlns (node)
+  "Get \"xmlns\" attribute of NODE, or nil if not present."
+  (jabber-xml-get-attribute node 'xmlns))
 
 (defun jabber-xml-path (xml-data path)
   "Find sub-node of XML-DATA according to PATH.
@@ -200,6 +219,7 @@ any string   character data of this node"
 		     (list attr `(jabber-xml-get-attribute ,xml-data ',attr)))
 		 attributes)
      ,@body))
+(put 'jabber-xml-let-attributes 'lisp-indent-function 2)
 
 (provide 'jabber-xml)
 

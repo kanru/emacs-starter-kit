@@ -1,6 +1,6 @@
 ;;; jabber-events.el --- Message events (JEP-0022) implementation
 
-;; Copyright (C) 2005  Magnus Henoch
+;; Copyright (C) 2005, 2008  Magnus Henoch
 
 ;; Author: Magnus Henoch <mange@freemail.hu>
 
@@ -19,6 +19,7 @@
 ;; the Free Software Foundation, Inc., 59 Temple Place - Suite 330,
 ;; Boston, MA 02111-1307, USA.
 
+(require 'jabber-autoloads)
 (require 'cl)
 
 (defgroup jabber-events nil 
@@ -124,9 +125,14 @@ and it hasn't been sent before."
     (when (and jabber-events-confirm-displayed
 	       (not jabber-events-display-confirmed)
 	       (memq 'displayed jabber-events-requested)
+	       ;; XXX: if jabber-events-requested is non-nil, how can
+	       ;; jabber-chatting-with be nil?  See
+	       ;; http://sourceforge.net/tracker/index.php?func=detail&aid=1872560&group_id=88346&atid=586350
+	       jabber-chatting-with
 	       ;; don't send to bare jids
 	       (jabber-jid-resource jabber-chatting-with))
       (jabber-send-sexp 
+       jabber-buffer-connection
        `(message 
 	 ((to . ,jabber-chatting-with))
 	 (x ((xmlns . "jabber:x:event"))
@@ -135,11 +141,12 @@ and it hasn't been sent before."
       (setq jabber-events-display-confirmed t))))
 
 (defun jabber-events-after-change ()
-  (let ((composing-now (not (eq (point-max) jabber-point-insert))))
+  (let ((composing-now (not (= (point-max) jabber-point-insert))))
     (when (and jabber-events-confirm-composing
 	       jabber-chatting-with
 	       (not (eq composing-now jabber-events-composing-sent)))
       (jabber-send-sexp 
+       jabber-buffer-connection
        `(message 
 	 ((to . ,jabber-chatting-with))
 	 (x ((xmlns . "jabber:x:event"))
@@ -149,17 +156,27 @@ and it hasn't been sent before."
 
 ;;; COMMON
 
-(add-to-list 'jabber-chat-printers 'jabber-handle-incoming-message-events)
+;; Add function last in chain, so a chat buffer is already created.
+(add-to-list 'jabber-message-chain 'jabber-handle-incoming-message-events t)
 
-(defun jabber-handle-incoming-message-events (xml-data)
-  (let ((x (find "jabber:x:event"
-		 (jabber-xml-get-children xml-data 'x)
-		 :key #'(lambda (x) (jabber-xml-get-attribute x 'xmlns))
-		 :test #'string=)))
-    ;; If there's a body, it's not an incoming message event.
-    (if (jabber-xml-get-children xml-data 'body)
-	;; User is done composing, obviously.
-	(progn
+(defun jabber-handle-incoming-message-events (jc xml-data)
+  (when (and (not (jabber-muc-message-p xml-data))
+	     (get-buffer (jabber-chat-get-buffer (jabber-xml-get-attribute xml-data 'from))))
+    (with-current-buffer (jabber-chat-get-buffer (jabber-xml-get-attribute xml-data 'from))
+      (let ((x (find "jabber:x:event"
+		     (jabber-xml-get-children xml-data 'x)
+		     :key #'(lambda (x) (jabber-xml-get-attribute x 'xmlns))
+		     :test #'string=)))
+	(cond
+	 ;; If we get an error message, we shouldn't report any
+	 ;; events, as the requests are mirrored from us.
+	 ((string= (jabber-xml-get-attribute xml-data 'type) "error")
+	  (remove-hook 'post-command-hook 'jabber-events-after-change t)
+	  (setq jabber-events-requested nil))
+	  
+	 ;; If there's a body, it's not an incoming message event.
+	 ((jabber-xml-get-children xml-data 'body)
+	  ;; User is done composing, obviously.
 	  (setq jabber-events-composing-p nil)
 	  (jabber-events-update-message)
 
@@ -181,6 +198,7 @@ and it hasn't been sent before."
 	  (flet ((send-notification 
 		  (type)
 		  (jabber-send-sexp 
+		   jc
 		   `(message 
 		     ((to . ,(jabber-xml-get-attribute xml-data 'from)))
 		     (x ((xmlns . "jabber:x:event"))
@@ -204,24 +222,25 @@ and it hasn't been sent before."
 		       (memq 'composing jabber-events-requested))
 	      (add-hook 'post-command-hook 'jabber-events-after-change
 			nil t))))
-      ;; So it has no body.  If it's a message event,
-      ;; the <x/> node should be the only child of the
-      ;; message, and it should contain an <id/> node.
-      ;; We check the latter.
-      (when (and x (jabber-xml-get-children x 'id))
-	;; Currently we don't care about the <id/> node.
+	 (t
+	  ;; So it has no body.  If it's a message event,
+	  ;; the <x/> node should be the only child of the
+	  ;; message, and it should contain an <id/> node.
+	  ;; We check the latter.
+	  (when (and x (jabber-xml-get-children x 'id))
+	    ;; Currently we don't care about the <id/> node.
 	
-	;; There's only one node except for the id.
-	(unless
-	    (dolist (possible-node '(offline delivered displayed))
-	      (when (jabber-xml-get-children x possible-node)
-		(setq jabber-events-arrived possible-node)
-		(jabber-events-update-message)
-		(return t)))
-	  ;; Or maybe even zero, which is a negative composing node.
-	  (setq jabber-events-composing-p
-		(not (null (jabber-xml-get-children x 'composing))))
-	  (jabber-events-update-message))))))
+	    ;; There's only one node except for the id.
+	    (unless
+		(dolist (possible-node '(offline delivered displayed))
+		  (when (jabber-xml-get-children x possible-node)
+		    (setq jabber-events-arrived possible-node)
+		    (jabber-events-update-message)
+		    (return t)))
+	      ;; Or maybe even zero, which is a negative composing node.
+	      (setq jabber-events-composing-p
+		    (not (null (jabber-xml-get-children x 'composing))))
+	      (jabber-events-update-message)))))))))
 
 (provide 'jabber-events)
 ;; arch-tag: 7b6e61fe-a9b3-11d9-afca-000a95c2fcd0

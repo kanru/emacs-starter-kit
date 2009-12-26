@@ -1,7 +1,7 @@
 ;; jabber-keymap.el - common keymap for many modes
 
+;; Copyright (C) 2003, 2004, 2007, 2008 - Magnus Henoch - mange@freemail.hu
 ;; Copyright (C) 2002, 2003, 2004 - tom berger - object@intelectronica.net
-;; Copyright (C) 2003, 2004 - Magnus Henoch - mange@freemail.hu
 
 ;; This file is a part of jabber.el.
 
@@ -39,18 +39,22 @@
       (define-key map [backtab] 'backward-button))
     map))
 
+;;;###autoload
 (defvar jabber-global-keymap
   (let ((map (make-sparse-keymap)))
-    (define-key map "\C-c" 'jabber-connect)
+    (define-key map "\C-c" 'jabber-connect-all)
     (define-key map "\C-d" 'jabber-disconnect)
     (define-key map "\C-r" 'jabber-switch-to-roster-buffer)
     (define-key map "\C-j" 'jabber-chat-with)
+    (define-key map "\C-l" 'jabber-activity-switch-to)
     (define-key map "\C-a" 'jabber-send-away-presence)
     (define-key map "\C-o" 'jabber-send-default-presence)
     (define-key map "\C-x" 'jabber-send-xa-presence)
+    (define-key map "\C-p" 'jabber-send-presence)
     map)
   "Global Jabber keymap (usually under C-x C-j)")
 
+;;;###autoload
 (define-key ctl-x-map "\C-j" jabber-global-keymap)
 
 (provide 'jabber-keymap)

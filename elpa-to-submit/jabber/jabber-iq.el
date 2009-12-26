@@ -1,7 +1,7 @@
 ;; jabber-iq.el - infoquery functions
 
+;; Copyright (C) 2003, 2004, 2007, 2008 - Magnus Henoch - mange@freemail.hu
 ;; Copyright (C) 2002, 2003, 2004 - tom berger - object@intelectronica.net
-;; Copyright (C) 2003, 2004 - Magnus Henoch - mange@freemail.hu
 
 ;; This file is a part of jabber.el.
 
@@ -43,6 +43,18 @@
   :group 'jabber
   :type 'hook)
 
+(defgroup jabber-browse nil "browse display options"
+  :group 'jabber)
+
+(defcustom jabber-browse-buffer-format "*-jabber-browse:-%n-*"
+  "The format specification for the name of browse buffers.
+
+These fields are available at this moment:
+
+%n   JID to browse"
+  :type 'string
+  :group 'jabber-browse)
+
 (defun jabber-browse-mode ()
 "\\{jabber-browse-mode-map}"
   (kill-all-local-variables)
@@ -57,7 +69,7 @@
 (put 'jabber-browse-mode 'mode-class 'special)
 
 (add-to-list 'jabber-iq-chain 'jabber-process-iq)
-(defun jabber-process-iq (xml-data)
+(defun jabber-process-iq (jc xml-data)
   "process an incoming iq stanza"
   (let* ((id (jabber-xml-get-attribute xml-data 'id))
          (type (jabber-xml-get-attribute xml-data 'type))
@@ -71,7 +83,7 @@
       (let ((callback-cons (nth (cdr (assoc type '(("result" . 0)
 						   ("error" . 1)))) (cdr callback))))
 	(if (consp callback-cons)
-	    (funcall (car callback-cons) xml-data (cdr callback-cons))))
+	    (funcall (car callback-cons) jc xml-data (cdr callback-cons))))
       (setq *jabber-open-info-queries* (delq callback *jabber-open-info-queries*)))
 
      ;; if type is "get" or "set", correct action depends on namespace of request.
@@ -85,39 +97,45 @@
 	     (handler (cdr (assoc (jabber-xml-get-attribute query 'xmlns) which-alist))))
 	(if handler
 	    (condition-case error-var
-		(funcall handler xml-data)
+		(funcall handler jc xml-data)
 	      (jabber-error
-	       (apply 'jabber-send-iq-error from id query (cdr error-var)))
-	      (error (jabber-send-iq-error from id query "wait" 'internal-server-error (error-message-string error-var))))
-	  (jabber-send-iq-error from id query "cancel" 'feature-not-implemented)))))))
+	       (apply 'jabber-send-iq-error jc from id query (cdr error-var)))
+	      (error (jabber-send-iq-error jc from id query "wait" 'internal-server-error (error-message-string error-var))))
+	  (jabber-send-iq-error jc from id query "cancel" 'feature-not-implemented)))))))
 
-(defun jabber-send-iq (to type query success-callback success-closure-data
+(defun jabber-send-iq (jc to type query success-callback success-closure-data
 			  error-callback error-closure-data &optional result-id)
   "Send an iq stanza to the specified entity, and optionally set up a callback.
+JC is the Jabber connection.
 TO is the addressee.
 TYPE is one of \"get\", \"set\", \"result\" or \"error\".
 QUERY is a list containing the child of the iq node in the format `jabber-sexp2xml'
 accepts.
 SUCCESS-CALLBACK is the function to be called when a successful result arrives.
-SUCCESS-CLOSURE-DATA is the second argument to SUCCESS-CALLBACK.
+SUCCESS-CLOSURE-DATA is an extra argument to SUCCESS-CALLBACK.
 ERROR-CALLBACK is the function to be called when an error arrives.
-ERROR-CLOSURE-DATA is the second argument to ERROR-CALLBACK.
+ERROR-CLOSURE-DATA is an extra argument to ERROR-CALLBACK.
 RESULT-ID is the id to be used for a response to a received iq message.
-`jabber-report-success' and `jabber-process-data' are common callbacks."
+`jabber-report-success' and `jabber-process-data' are common callbacks.
+
+The callback functions are called like this:
+\(funcall CALLBACK JC XML-DATA CLOSURE-DATA)
+with XML-DATA being the IQ stanza received in response. "
   (let ((id (or result-id (apply 'format "emacs-iq-%d.%d.%d" (current-time)))))
     (if (or success-callback error-callback)
-	(setq *jabber-open-info-queries* (cons (list id 
+	(setq *jabber-open-info-queries* (cons (list id
 						     (cons success-callback success-closure-data)
 						     (cons error-callback error-closure-data))
 
 					       *jabber-open-info-queries*)))
-    (jabber-send-sexp (list 'iq (append 
+    (jabber-send-sexp jc
+		      (list 'iq (append 
 				 (if to (list (cons 'to to)))
 				 (list (cons 'type type))
 				 (list (cons 'id id)))
 			    query))))
 
-(defun jabber-send-iq-error (to id original-query error-type condition
+(defun jabber-send-iq-error (jc to id original-query error-type condition
 				&optional text app-specific)
   "Send an error iq stanza to the specified entity in response to a
 previously sent iq stanza.
@@ -132,23 +150,26 @@ TEXT is a string to be sent in the error message, or nil for no text.
 APP-SPECIFIC is a list of extra XML tags.
 
 See section 9.3 of XMPP Core."
-  (jabber-send-sexp `(iq ((to . ,to)
-			  (type . "error")
-			  (id . ,id))
-			 ,original-query
-			 (error ((type . ,error-type))
-				(,condition ((xmlns . "urn:ietf:params:xml:ns:xmpp-stanzas")))
-				,(if text
-				     `(text ((xmlns . "urn:ietf:params:xml:ns:xmpp-stanzas"))
-					   ,text))
-				,@app-specific))))
+  (jabber-send-sexp 
+   jc
+   `(iq ((to . ,to)
+	 (type . "error")
+	 (id . ,id))
+	,original-query
+	(error ((type . ,error-type))
+	       (,condition ((xmlns . "urn:ietf:params:xml:ns:xmpp-stanzas")))
+	       ,(if text
+		    `(text ((xmlns . "urn:ietf:params:xml:ns:xmpp-stanzas"))
+			   ,text))
+	       ,@app-specific))))
 
-(defun jabber-process-data (xml-data closure-data)
+(defun jabber-process-data (jc xml-data closure-data)
   "Process random results from various requests."
-  (let ((from (or (jabber-xml-get-attribute xml-data 'from) jabber-server))
+  (let ((from (or (jabber-xml-get-attribute xml-data 'from) (plist-get (fsm-get-state-data jc) :server)))
 	(xmlns (jabber-iq-xmlns xml-data))
 	(type (jabber-xml-get-attribute xml-data 'type)))
-    (with-current-buffer (get-buffer-create (concat "*-jabber-browse-:-" from "-*"))
+    (with-current-buffer (get-buffer-create (format-spec jabber-browse-buffer-format
+                                                         (list (cons ?n from))))
       (if (not (eq major-mode 'jabber-browse-mode))
 	  (jabber-browse-mode))
 
@@ -158,19 +179,21 @@ See section 9.3 of XMPP Core."
       (insert (jabber-propertize from
 			  'face 'jabber-title-large) "\n\n")
 
-      ;; If closure-data is a function, call it.  If it is a string,
-      ;; output it along with a description of the error.  For other
-      ;; values (e.g. nil), just dump the XML.
-      (cond
-       ((functionp closure-data)
-	(funcall closure-data xml-data))
-       ((stringp closure-data)
-	(insert closure-data ": " (jabber-parse-error (jabber-iq-error xml-data)) "\n\n"))
-       (t
-	(insert (format "%S\n\n" xml-data))))
+      ;; Put point at beginning of data
+      (save-excursion
+	;; If closure-data is a function, call it.  If it is a string,
+	;; output it along with a description of the error.  For other
+	;; values (e.g. nil), just dump the XML.
+	(cond
+	 ((functionp closure-data)
+	  (funcall closure-data jc xml-data))
+	 ((stringp closure-data)
+	  (insert closure-data ": " (jabber-parse-error (jabber-iq-error xml-data)) "\n\n"))
+	 (t
+	  (insert (format "%S\n\n" xml-data))))
 
-      (dolist (hook '(jabber-info-message-hooks jabber-alert-info-message-hooks))
-	(run-hook-with-args hook 'browse (current-buffer) (funcall jabber-alert-info-message-function 'browse (current-buffer)))))))
+	(dolist (hook '(jabber-info-message-hooks jabber-alert-info-message-hooks))
+	  (run-hook-with-args hook 'browse (current-buffer) (funcall jabber-alert-info-message-function 'browse (current-buffer))))))))
 
 (provide 'jabber-iq)
 
