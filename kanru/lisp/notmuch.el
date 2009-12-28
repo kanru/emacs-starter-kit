@@ -51,6 +51,17 @@
 (require 'mm-view)
 (require 'message)
 
+(defvar notmuch-show-stash-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "m" 'notmuch-show-stash-message-id)
+    (define-key map "F" 'notmuch-show-stash-filename)
+    (define-key map "T" 'notmuch-show-stash-tags)
+    map)
+  "Submap for stash commands"
+  )
+
+(fset 'notmuch-show-stash-map notmuch-show-stash-map)
+
 (defvar notmuch-show-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map "?" 'notmuch-help)
@@ -81,6 +92,7 @@
     (define-key map "n" 'notmuch-show-next-message)
     (define-key map (kbd "DEL") 'notmuch-show-rewind)
     (define-key map " " 'notmuch-show-advance-marking-read-and-archiving)
+    (define-key map "z" 'notmuch-show-stash-map)
     map)
   "Keymap for \"notmuch show\" buffers.")
 (fset 'notmuch-show-mode-map notmuch-show-mode-map)
@@ -102,7 +114,7 @@ pattern can still test against the entire line).")
 Can use up to one integer format parameter, i.e. %d")
 
 (defvar notmuch-show-citation-button-format 
-  "[ %d-line hidden citation. Click/Enter to show ]"
+  "[ %d more citation lines. Click/Enter to toggle visibility. ]"
   "String used to construct button text for hidden citations.
 
 Can use up to one integer format parameter, i.e. %d")
@@ -110,8 +122,11 @@ Can use up to one integer format parameter, i.e. %d")
 (defvar notmuch-show-signature-lines-max 12
   "Maximum length of signature that will be hidden by default.")
 
-(defvar notmuch-show-citation-lines-min 4
-  "Minimum length of citation that will be hidden.")
+(defvar notmuch-show-citation-lines-prefix 4
+  "Always show at least this many lines of a citation.
+
+If there is one more line, show that, otherwise collapse
+remaining lines into a button.")
 
 (defvar notmuch-command "notmuch"
   "Command to run the notmuch binary.")
@@ -657,7 +672,7 @@ which this thread was originally shown."
 
 (defun notmuch-show-citation-regexp (depth)
   "Build a regexp for matching citations at a given DEPTH (indent)"
-  (let ((line-regexp (format "[[:space:]]\\{%d\\}*>.*\n" depth)))
+  (let ((line-regexp (format "[[:space:]]\\{%d\\}>.*\n" depth)))
     (concat "\\(?:^" line-regexp 
 	    "\\(?:[[:space:]]*\n" line-regexp
 	    "\\)?\\)+")))
@@ -693,11 +708,13 @@ is what to put on the button."
 						 
 (defun notmuch-show-markup-citations-region (beg end depth)
   "Markup citations, and up to one signature in the given region"
-  
+  ;; it would be nice if the untabify was not required, but 
+  ;; that would require notmuch to indent with spaces.
+  (untabify beg end)
   (let ((citation-regexp (notmuch-show-citation-regexp depth))
 	(signature-regexp (concat (format "^[[:space:]]\\{%d\\}" depth) 
 				  notmuch-show-signature-regexp))
-	(indent (make-string depth ? )))
+	(indent (concat "\n" (make-string depth ? ))))
     (goto-char beg)
     (beginning-of-line)
     (while (and (< (point) end) 
@@ -705,18 +722,18 @@ is what to put on the button."
       (let* ((cite-start (match-beginning 0))
 	     (cite-end 	(match-end 0))
 	     (cite-lines (count-lines cite-start cite-end)))
-	(if (>= cite-lines notmuch-show-citation-lines-min)
-	    (save-excursion
-              (goto-char cite-start)
-              (forward-line notmuch-show-citation-lines-min)
-              (let ((cite-start (point)))
-                (notmuch-show-region-to-button 
-                 cite-start cite-end
-                 "citation"
-                 (concat "\n" indent)
-                 (format notmuch-show-citation-button-format cite-lines)
-                 ))))))
-    (if (re-search-forward signature-regexp end t)
+	(when (>  cite-lines (1+ notmuch-show-citation-lines-prefix))
+	    (goto-char cite-start)
+	    (forward-line notmuch-show-citation-lines-prefix)
+	    (notmuch-show-region-to-button 
+	     (point) cite-end
+	     "citation"
+	     indent
+	     (format notmuch-show-citation-button-format 
+		     (- cite-lines notmuch-show-citation-lines-prefix))
+	     ))))
+    (if (and (< (point) end) 
+	     (re-search-forward signature-regexp end t))
 	(let* ((sig-start (match-beginning 0))
 	       (sig-end (match-end 0))
 	       (sig-lines (1- (count-lines sig-start end))))
@@ -922,8 +939,12 @@ For a mouse binding, return nil."
     (if (mouse-event-p key)
 	nil
       (if (keymapp action)
-	  (let ((substitute (apply-partially 'notmuch-substitute-one-command-key-with-prefix (notmuch-prefix-key-description key))))
-	    (mapconcat substitute (cdr action) "\n"))
+	  (let ((substitute (apply-partially 'notmuch-substitute-one-command-key-with-prefix (notmuch-prefix-key-description key)))
+		(as-list))
+	    (map-keymap (lambda (a b)
+			  (push (cons a b) as-list))
+			action)
+	    (mapconcat substitute as-list "\n"))
 	(concat prefix (format-kbd-macro (vector key))
 		"\t"
 		(notmuch-documentation-first-line action))))))
@@ -1007,6 +1028,25 @@ All currently available key bindings:
   :type 'hook
   :options '(hl-line-mode)
   :group 'notmuch)
+
+(defun notmuch-show-do-stash (text)
+    (kill-new text)
+    (message (concat "Saved " text)))
+
+(defun notmuch-show-stash-message-id ()
+  "Copy message-id of current message to kill-ring."
+  (interactive)
+  (notmuch-show-do-stash (notmuch-show-get-message-id)))
+
+(defun notmuch-show-stash-filename ()
+  "Copy filename of current message to kill-ring."
+  (interactive)
+  (notmuch-show-do-stash (notmuch-show-get-filename)))
+
+(defun notmuch-show-stash-tags ()
+  "Copy tags of current message to kill-ring as a comma separated list."
+  (interactive)
+  (notmuch-show-do-stash (mapconcat 'identity (notmuch-show-get-tags) ",")))
 
 ; Make show mode a bit prettier, highlighting URLs and using word wrap
 
