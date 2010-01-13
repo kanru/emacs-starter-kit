@@ -4,7 +4,7 @@
   (regexp-opt '("FILTER" "IMPORT" "CREATE_NEW_LOG" "True" "False") 'words)
   "0xuart filter mode keywords")
 (defvar filter-mode-commands-regexp
-  (regexp-opt '("STATE" "AFTER" "RESET" "LOG_START" "LOG_STOP") 'words)
+  (regexp-opt '("STATE" "AFTER" "RESET" "LOG_START" "LOG_STOP" "LOG" "GSTATE" "WRITE" "CHECK" "ENTER") 'words)
   "0xuart filter mode commands")
 
 (define-generic-mode 'filter-mode
