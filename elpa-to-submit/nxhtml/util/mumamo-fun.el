@@ -51,8 +51,13 @@
 ;;
 ;;; Code:
 
+(eval-when-compile (require 'cl))
 (eval-when-compile (add-to-list 'load-path default-directory))
-(require 'mumamo)
+(eval-when-compile (require 'mumamo))
+;;(mumamo-require)
+
+;;;#autoload
+;;(defun mumamo-fun-require ())
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; File wide key bindings
@@ -66,7 +71,9 @@
 ;;   "Return mumamo multi mode hook symbol."
 ;;   (intern-soft (concat (symbol-name mumamo-multi-major-mode) "-hook")))
 
+;;;###autoload
 (defun mumamo-define-html-file-wide-keys ()
+  "Define keys in multi major mode keymap for html files."
   (let ((map (mumamo-multi-mode-map)))
     (define-key map [(control ?c) (control ?h) ?b] 'nxhtml-browse-file)
     ))
@@ -79,7 +86,8 @@
 
 (defun mumamo-chunk-attr= (pos min max attr= attr=is-regex attr-regex submode)
   "This should work similar to `mumamo-find-possible-chunk'.
-See `mumamo-chunk-style=' for an example of use."
+See `mumamo-chunk-style=' for an example of use.
+See `mumamo-find-possible-chunk' for POS, MIN and MAX."
   (mumamo-chunk-attr=-new pos max attr= attr=is-regex attr-regex submode))
 
 (defun mumamo-chunk-attr=-new-fw-exc-fun (pos max)
@@ -691,6 +699,76 @@ See `mumamo-find-possible-chunk' for POS, MIN and MAX."
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; HTML w html-mode
 
+(put 'mumamo-alt-php-tags-mode 'permanent-local t)
+(define-minor-mode mumamo-alt-php-tags-mode
+  "Minor mode for using '(?php' instead of '<?php' in buffer.
+When turning on this mode <?php is replace with (?php in the buffer.
+If you write the buffer to file (?php is however written as <?php.
+
+When turning off this mode (?php is replace with <?php in the buffer.
+
+The purpose of this minor mode is to work around problems with
+using the `nxml-mode' parser in php files.  `nxml-mode' knows
+damned well that you can not have the character < in strings and
+I can't make it forget that.  For PHP programmers it is however
+very convient to use <?php ... ?> in strings.
+
+There is no reason to use this minor mode unless you want XML
+validation and/or completion in your php file.  If you do not
+want that then you can simply use a multi major mode based on
+`html-mode' instead of `nxml-mode'/`nxhtml-mode'.  Or, of course,
+just `php-mode' if there is no html code in the file."
+  :lighter "<?php "
+  (if mumamo-alt-php-tags-mode
+      (progn
+        ;;(unless mumamo-multi-major-mode (error "Only for mumamo multi major modes"))
+        (unless (let ((major-mode (mumamo-main-major-mode)))
+                  (derived-mode-p 'nxml-mode))
+          ;;(error "Mumamo multi major mode must be based on nxml-mode")
+          )
+        (unless (memq 'mumamo-chunk-alt-php (caddr mumamo-current-chunk-family))
+          (error "Mumamo multi major must have chunk function mumamo-chunk-alt-php"))
+
+        ;; Be paranoid about the file/content write hooks
+        (when (<= emacs-major-version 22)
+          (when local-write-file-hooks ;; obsolete, but check!
+            (error "Will not do this because local-write-file-hooks is non-nil")))
+        (remove-hook 'write-contents-functions 'mumamo-alt-php-write-contents t)
+        (when write-contents-functions
+          (error "Will not do this because write-contents-functions is non-nil"))
+        (when (delq 'recentf-track-opened-file (copy-sequence write-file-functions))
+          (error "Will not do this because write-file-functions is non-nil"))
+
+        (add-hook 'write-contents-functions 'mumamo-alt-php-write-contents t t)
+        (put 'write-contents-functions 'permanent-local t)
+        (save-restriction
+          (let ((here (point)))
+            (widen)
+            (goto-char (point-min))
+            (while (search-forward "<?php" nil t)
+              (replace-match "(?php"))
+            (goto-char (point-min))
+            (while (search-forward "<?=" nil t)
+              (replace-match "(?="))
+            (goto-char (point-min))
+            (while (search-forward "?>" nil t)
+                (replace-match "?)"))
+            (goto-char here))))
+    (save-restriction
+      (let ((here (point)))
+        (widen)
+        (goto-char (point-min))
+        (while (search-forward "(?php" nil t)
+          (replace-match "<?php"))
+        (goto-char (point-min))
+        (while (search-forward "(?=" nil t)
+          (replace-match "<?="))
+        (goto-char (point-min))
+        (while (search-forward "?)" nil t)
+          (replace-match "?>"))
+        (goto-char here)))
+    (remove-hook 'write-contents-functions 'mumamo-alt-php-write-contents t)))
+
 (defun mumamo-chunk-alt-php (pos min max)
   "Find (?php ... ?), return range and `php-mode'.
 Workaround for the problem that I can not tame `nxml-mode' to recognize <?php.
@@ -758,75 +836,6 @@ This covers inlined style and javascript and PHP."
     (goto-char here))
   ;; saved, return t
   t)
-
-(put 'mumamo-alt-php-tags-mode 'permanent-local t)
-(define-minor-mode mumamo-alt-php-tags-mode
-  "Minor mode for using '(?php' instead of '<?php' in buffer.
-When turning on this mode <?php is replace with (?php in the buffer.
-If you write the buffer to file (?php is however written as <?php.
-
-When turning off this mode (?php is replace with <?php in the buffer.
-
-The purpose of this minor mode is to work around problems with
-using the `nxml-mode' parser in php files.  `nxml-mode' knows
-damned well that you can not have the character < in strings and
-I can't make it forget that.  For PHP programmers it is however
-very convient to use <?php ... ?> in strings.
-
-There is no reason to use this minor mode unless you want XML
-validation and/or completion in your php file.  If you do not
-want that then you can simply use a multi major mode based on
-`html-mode' instead of `nxml-mode'/`nxhtml-mode'.  Or, of course,
-just `php-mode' if there is no html code in the file."
-  :lighter "<?php "
-  (if mumamo-alt-php-tags-mode
-      (progn
-        ;;(unless mumamo-multi-major-mode (error "Only for mumamo multi major modes"))
-        (unless (let ((major-mode (mumamo-main-major-mode)))
-                  (derived-mode-p 'nxml-mode))
-          ;;(error "Mumamo multi major mode must be based on nxml-mode")
-          )
-        (unless (memq 'mumamo-chunk-alt-php (caddr mumamo-current-chunk-family))
-          (error "Mumamo multi major must have chunk function mumamo-chunk-alt-php"))
-
-        ;; Be paranoid about the file/content write hooks
-        (when local-write-file-hooks ;; obsolete, but check!
-          (error "Will not do this because local-write-file-hooks is non-nil"))
-        (remove-hook 'write-contents-functions 'mumamo-alt-php-write-contents t)
-        (when write-contents-functions
-          (error "Will not do this because write-contents-functions is non-nil"))
-        (when (delq 'recentf-track-opened-file (copy-sequence write-file-functions))
-          (error "Will not do this because write-file-functions is non-nil"))
-
-        (add-hook 'write-contents-functions 'mumamo-alt-php-write-contents t t)
-        (put 'write-contents-functions 'permanent-local t)
-        (save-restriction
-          (let ((here (point)))
-            (widen)
-            (goto-char (point-min))
-            (while (search-forward "<?php" nil t)
-              (replace-match "(?php"))
-            (goto-char (point-min))
-            (while (search-forward "<?=" nil t)
-              (replace-match "(?="))
-            (goto-char (point-min))
-            (while (search-forward "?>" nil t)
-                (replace-match "?)"))
-            (goto-char here))))
-    (save-restriction
-      (let ((here (point)))
-        (widen)
-        (goto-char (point-min))
-        (while (search-forward "(?php" nil t)
-          (replace-match "<?php"))
-        (goto-char (point-min))
-        (while (search-forward "(?=" nil t)
-          (replace-match "<?="))
-        (goto-char (point-min))
-        (while (search-forward "?)" nil t)
-          (replace-match "?>"))
-        (goto-char here)))
-    (remove-hook 'write-contents-functions 'mumamo-alt-php-write-contents t)))
 
 ;;;###autoload
 (define-mumamo-multi-major-mode nxml-mumamo-mode
@@ -921,9 +930,7 @@ See also `mumamo-alt-php-tags-mode'."
 ;;;###autoload
 (define-mumamo-multi-major-mode mason-html-mumamo-mode
   "Turn on multiple major modes for Mason using main mode `html-mode'.
-This covers inlined style and javascript and PHP.
-
-See also `mumamo-alt-php-tags-mode'."
+This covers inlined style and javascript."
   ("Mason html Family" html-mode
    (
     mumamo-chunk-mason-perl-line
@@ -1203,22 +1210,25 @@ See `mumamo-find-possible-chunk' for POS, MIN and MAX."
 ;; gets confused by the %} ending and the } ending.  This can be
 ;; solved by running a separate phase to get the chunks first and
 ;; during that phase match start and end of the chunk.
+
+
+;; Note: You will currently get fontification errors if you use
+;; python chunks
+
+;;   {% python ... %}
+
+;; The reason is that the chunk routines currently do not know when
+;; to just look for the } or %} endings.  However this should not
+;; affect your editing normally.
+
 ;;;###autoload
 (define-mumamo-multi-major-mode genshi-html-mumamo-mode
   "Turn on multiple major modes for Genshi with main mode `html-mode'.
 This also covers inlined style and javascript.
-
-Note: You will currently get fontification errors if you use
-python chunks
-
-  {% python ... %}
-
-The reason is that the chunk routines currently do not know when
-to just look for the } or %} endings.  However this should not
-affect your editing normally."
+"
   ("Genshi HTML Family" html-mode
    (
-    mumamo-chunk-genshi%
+    ;;mumamo-chunk-genshi%
     mumamo-chunk-genshi$
     mumamo-chunk-py:=
     mumamo-chunk-py:match
@@ -1443,7 +1453,20 @@ This also covers inlined style and javascript."
 (defun mumamo-chunk-eruby (pos min max)
   "Find <% ... %>.  Return range and 'ruby-mode.
 See `mumamo-find-possible-chunk' for POS, MIN and MAX."
-  (mumamo-quick-static-chunk pos min max "<%" "%>" t 'ruby-mode t))
+  (let ((chunk (mumamo-quick-static-chunk pos min max "<%" "%>" t 'ruby-mode t)))
+    (when chunk
+      ;; Put indentation type on 'mumamo-next-indent on the chunk:
+      ;; Fix-me: use this!
+      (setcdr (last chunk) '(mumamo-template-indentor))
+      chunk)))
+
+(defun mumamo-chunk-eruby-comment (pos min max)
+  "Find <%# ... %>.  Return range and 'ruby-mode.
+See `mumamo-find-possible-chunk' for POS, MIN and MAX.
+
+This is needed since otherwise the end marker is thought to be
+part of a comment."
+  (mumamo-quick-static-chunk pos min max "<%#" "%>" t 'mumamo-comment-mode t))
 
 ;; (defun mumamo-search-bw-exc-start-ruby (pos min)
 ;;   "Helper for `mumamo-chunk-ruby'.
@@ -1458,7 +1481,8 @@ See `mumamo-find-possible-chunk' for POS, MIN and MAX."
   "Turn on multiple major mode for eRuby with unspecified main mode.
 Current major-mode will be used as the main major mode."
   ("eRuby Family" nil
-   (mumamo-chunk-eruby
+   (mumamo-chunk-eruby-comment
+    mumamo-chunk-eruby
     )))
 
 ;;;###autoload
@@ -1466,7 +1490,8 @@ Current major-mode will be used as the main major mode."
   "Turn on multiple major modes for eRuby with main mode `html-mode'.
 This also covers inlined style and javascript."
   ("eRuby Html Family" html-mode
-   (mumamo-chunk-eruby
+   (mumamo-chunk-eruby-comment
+    mumamo-chunk-eruby
     mumamo-chunk-inlined-style
     mumamo-chunk-inlined-script
     mumamo-chunk-style=
@@ -1484,6 +1509,7 @@ This also covers inlined style and javascript."
     ("JAVASCRIPT" javascript-mode)
     ("JAVA" java-mode)
     ("GROOVY" groovy-mode)
+    ("SQL" sql-mode)
     )
   "Matches for heredoc modes.
 The entries in this list have the form
@@ -1738,10 +1764,7 @@ See `mumamo-heredoc-modes' for how to specify heredoc major modes."
 ;;;###autoload
 (define-mumamo-multi-major-mode cperl-heredoc-mumamo-mode
   "Turn on multiple major modes for Perl heredoc document.
-See `mumamo-heredoc-modes' for how to specify heredoc major modes.
-
-Note: I have seen some problems with this.  Use
-`perl-mumamo-mode' instead for now."
+See `mumamo-heredoc-modes' for how to specify heredoc major modes."
   ("Perl HereDoc" cperl-mode
    (mumamo-chunk-perl-heredoc
     )))
@@ -2788,18 +2811,20 @@ This also covers inlined style and javascript."
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; XSL
 
+;;;###autoload
 (define-mumamo-multi-major-mode xsl-nxml-mumamo-mode
   "Turn on multi major mode for XSL with main mode `nxml-mode'.
-This also covers inlined style and javascript."
-  ("XSL HTML Family" nxml-mode
+This covers inlined style and javascript."
+  ("XSL nXtml Family" nxml-mode
    (
     mumamo-chunk-inlined-style
     mumamo-chunk-inlined-script
     )))
 
+;;;###autoload
 (define-mumamo-multi-major-mode xsl-sgml-mumamo-mode
   "Turn on multi major mode for XSL with main mode `sgml-mode'.
-This also covers inlined style and javascript."
+This covers inlined style and javascript."
   ("XSL SGML Family" sgml-mode
    (
     mumamo-chunk-inlined-style

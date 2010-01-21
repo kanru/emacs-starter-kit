@@ -57,46 +57,53 @@
 ;;
 ;;; Code:
 
-(eval-when-compile (require 'mumamo))
-(eval-when-compile (require 'foldit))
 (eval-when-compile (require 'cl))
-(eval-when-compile (require 'appmenu-fold))
-(eval-when-compile (require 'xhtml-help))
-;;(eval-when-compile (require 'nxhtml-menu)
-(eval-when-compile (require 'fold-dwim))
-(eval-when-compile (require 'typesetter nil t))
-;;(eval-when-compile (require 'outline)
-(eval-when-compile (require 'html-toc nil t))
-(eval-when-compile (require 'html-pagetoc nil t))
-(eval-when-compile
-  (unless (or (< emacs-major-version 23)
-              (featurep 'nxhtml-autostart))
-    (let ((efn (expand-file-name
-                "../autostart.el"
-                (file-name-directory
-                 (or load-file-name
-                     (when (boundp 'bytecomp-filename) bytecomp-filename)
-                     buffer-file-name)))))
-      (message "efn=%s" efn)
-      (load efn))
-    (require 'rng-valid)
-    (require 'rng-nxml)))
+(eval-when-compile (require 'hideshow))
 
-(require 'typesetter nil t)
+(eval-when-compile (require 'appmenu-fold nil t))
+(eval-when-compile (require 'fold-dwim nil t))
+(eval-when-compile (require 'foldit nil t))
+(eval-when-compile (require 'html-pagetoc nil t))
+(eval-when-compile (require 'html-toc nil t))
+(eval-when-compile (require 'mumamo nil t))
+(eval-when-compile (require 'mlinks nil t))
+(eval-when-compile (require 'nxhtml-base))
+;;(eval-when-compile (require 'nxhtml-menu)) ;; recursive load
+(eval-when-compile (require 'ourcomments-util nil t))
+(eval-and-compile (require 'typesetter nil t))
+(eval-when-compile (require 'xhtml-help nil t))
+(eval-when-compile (require 'popcmp nil t))
+;; (eval-when-compile
+;;   (unless (or (< emacs-major-version 23)
+;;               (boundp 'nxhtml-menu:version)
+;;               (featurep 'nxhtml-autostart))
+;;     (let ((efn (expand-file-name
+;;                 "../autostart.el"
+;;                 (file-name-directory
+;;                  (or load-file-name
+;;                      (when (boundp 'bytecomp-filename) bytecomp-filename)
+;;                      buffer-file-name)))))
+;;       (message "efn=%s" efn)
+;;       (load efn))
+;;     (require 'rng-valid)
+;;     (require 'rng-nxml)))
+
 (require 'button)
 (require 'loadhist)
-(require 'nxml-mode)
+(require 'nxml-mode nil t)
+(require 'rng-nxml nil t)
+(require 'rng-valid nil t)
 
 ;; Require nxml things conditionally to silence byte compiler under
 ;; Emacs 22.
-(require 'rngalt)
+(eval-and-compile (require 'rngalt nil t))
 
 (require 'url-parse)
 (require 'url-expand)
-(require 'popcmp)
-(eval-when-compile (require 'html-imenu))
-(eval-when-compile (require 'tidy-xhtml))
-(eval-when-compile (require 'html-quote))
+(require 'popcmp nil t)
+(eval-when-compile (require 'html-imenu nil t))
+(eval-when-compile (require 'tidy-xhtml nil t))
+(eval-when-compile (require 'html-quote nil t))
 
 (defun nxhtml-version ()
   "Show nxthml version."
@@ -107,6 +114,36 @@
 ;;"Holds the original `nxml-fontify-attribute' function.")
 ;;(fset 'nxhtml-nxml-fontify-attribute (symbol-function 'nxml-fontify-attribute))
 
+
+(defun nxhtml-turn-onoff-tag-do-also (on)
+  (add-hook 'nxhtml-mode-hook 'nxhtml-check-tag-do-also)
+  (dolist (b (buffer-list))
+    (when (with-current-buffer b
+            (eq major-mode 'nxhtml-mode))
+      (if on
+          (progn
+            (add-hook 'rngalt-complete-tag-hooks 'nxhtml-complete-tag-do-also t t)
+            )
+        (remove-hook 'rngalt-complete-tag-hooks 'nxhtml-complete-tag-do-also t)
+        ))))
+
+(define-toggle nxhtml-tag-do-also t
+  "When completing tag names do some more if non-nil.
+For some tag names additional things can be done at completion to
+speed writing up.  For example for an <img ...> tag `nxhtml-mode'
+can prompt for src attribute and add width and height attributes
+if this attribute points to a local file.
+
+You can add additional elisp code for completing to
+`nxhtml-complete-tag-do-also'."
+  :set (lambda (symbol value)
+         (set-default symbol value)
+         (nxhtml-turn-onoff-tag-do-also value))
+  :group 'nxhtml)
+
+(defun nxhtml-check-tag-do-also ()
+  (when nxhtml-tag-do-also
+    (nxhtml-turn-onoff-tag-do-also t)))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -301,9 +338,9 @@
 ;;                    'xhtml-help-show-css-ref))))
 
 ;; This should be run in `change-major-mode-hook'."
-(defun nxhtml-change-mode ()
-  (when (fboundp 'mlinks-mode)
-    (mlinks-mode 0)))
+;; (defun nxhtml-change-mode ()
+;;   (when (fboundp 'mlinks-mode)
+;;     (mlinks-mode 0)))
 
 (when (< emacs-major-version 23)
   (defun nxml-change-mode ()
@@ -336,7 +373,7 @@ when editing XHTML files.\\<nxhtml-mode-map>
 To see an overview in html format do \\[nxhtml-overview].
 
 * Note: Please observe that when loading nXhtml some file
-  associations are done, see `nxhtml-auto-mode-alist'.
+  associations are done, see `nxhtml-setup-file-assoc'.
 
 The nXhtml menu is added by this mode \(or actually the minor
 mode `nxhtml-minor-mode') and gives quick access and an overview
@@ -433,15 +470,15 @@ point in the mumamo chunk you want to know the key bindings in.
        nxhtml-heading-element-name-regexp)
   (when (fboundp 'nxml-change-mode)
     (add-hook 'change-major-mode-hook 'nxml-change-mode nil t))
-  (add-hook 'change-major-mode-hook 'nxhtml-change-mode nil t)
+  ;;(add-hook 'change-major-mode-hook 'nxhtml-change-mode nil t)
   (when (featurep 'rngalt)
     (add-hook 'nxml-completion-hook 'rngalt-complete nil t))
   ;;(define-key nxhtml-mode-map [(meta tab)] 'nxml-complete)
-  (nxhtml-minor-mode 1)
+  ;;(nxhtml-minor-mode 1)
   (when (and nxhtml-use-imenu
              (featurep 'html-imenu))
     (add-hook 'nxhtml-mode-hook 'html-imenu-setup nil t))
-  (mlinks-mode 1)
+  ;;(mlinks-mode 1)
   (nxhtml-setup-for-fold-dwim)
   (when (featurep 'rngalt)
     (set (make-local-variable 'rngalt-completing-read-tag) 'nxhtml-completing-read-tag)
@@ -1629,36 +1666,6 @@ occurence of a tag name is used.")
       (funcall (cadr tagrec))))
   )
 
-(defun nxhtml-turn-onoff-tag-do-also (on)
-  (add-hook 'nxhtml-mode-hook 'nxhtml-check-tag-do-also)
-  (dolist (b (buffer-list))
-    (when (with-current-buffer b
-            (eq major-mode 'nxhtml-mode))
-      (if on
-          (progn
-            (add-hook 'rngalt-complete-tag-hooks 'nxhtml-complete-tag-do-also t t)
-            )
-        (remove-hook 'rngalt-complete-tag-hooks 'nxhtml-complete-tag-do-also t)
-        ))))
-
-(define-toggle nxhtml-tag-do-also t
-  "When completing tag names do some more if non-nil.
-For some tag names additional things can be done at completion to
-speed writing up.  For example for an <img ...> tag `nxhtml-mode'
-can prompt for src attribute and add width and height attributes
-if this attribute points to a local file.
-
-You can add additional elisp code for completing to
-`nxhtml-complete-tag-do-also'."
-  :set (lambda (symbol value)
-         (set-default symbol value)
-         (nxhtml-turn-onoff-tag-do-also value))
-  :group 'nxhtml)
-
-(defun nxhtml-check-tag-do-also ()
-  (when nxhtml-tag-do-also
-    (nxhtml-turn-onoff-tag-do-also t)))
-
 
 ;;;###autoload
 (define-minor-mode nxhtml-validation-header-mode
@@ -2723,9 +2730,7 @@ nXhtml and can be opened from the nXhtml menu under
                      (font-size (read-number "Font size (px): " 12))
                      (css-template-file (read-file-name
                                          "CSS template file: "
-                                         (expand-file-name
-                                          "../etc/templates/"
-                                          nxhtml-src-dir)
+                                         (expand-file-name "etc/templates/" nxhtml-install-dir)
                                          nil
                                          t
                                          "rollover-2v.css"

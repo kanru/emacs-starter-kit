@@ -52,6 +52,8 @@
 (eval-when-compile (require 'recentf))
 (eval-when-compile (require 'bookmark))
 (eval-when-compile (require 'uniquify))
+(require 'cus-edit)
+(require 'org)
 
 ;; (ourcomments-indirect-fun 'html-mumamo)
 ;; (ourcomments-indirect-fun 'html-mumamo-mode)
@@ -130,6 +132,35 @@ To create a menu item something similar to this can be used:
       \(list 'menu-item \"Toggle nice SYMBOL\"
             'SYMBOL-toggle
             :button '(:toggle . SYMBOL)))"
+  (declare
+   (doc-string 3)
+   (debug t))
+  (let* ((SYMBOL-toggle (intern (concat (symbol-name symbol) "-toggle")))
+         (SYMBOL-name (symbol-name symbol))
+         (var-doc doc)
+         (fun-doc (concat "Toggles the \(boolean) value of `"
+                          SYMBOL-name
+                          "'.\n"
+                          "For how to set it permanently see this variable.\n"
+                          )))
+    (let ((var (append `(defcustom ,symbol ,value ,var-doc)
+                args
+                nil))
+          (fun `(defun ,SYMBOL-toggle ()
+                  ,fun-doc
+                  (interactive)
+                  (customize-set-variable (quote ,symbol) (not ,symbol)))))
+      ;;(message "\nvar=%S\nfun=%S\n" var fun)
+      ;; Fix-me: I am having problems with this one, see
+      ;; http://lists.gnu.org/archive/html/help-gnu-emacs/2009-12/msg00608.html
+      `(progn ,var ,fun)
+    )))
+
+;;(macroexpand '(define-toggle my-toggle t "doc" :tag "Short help" :group 'popcmp))
+;;(macroexpand-all (define-toggle my-toggle t "doc" :tag "Short help" :group 'popcmp))
+
+;;;###autoload
+(defmacro define-toggle-old (symbol value doc &rest args)
   (declare (doc-string 3))
   (list
    'progn
@@ -369,6 +400,33 @@ To create a menu item something similar to this can be used:
   "Unfill using the fill function FN."
   (let ((fill-column (1+ (point-max)))) (call-interactively fn)))
 
+(defvar fill-dwim-state nil)
+(defvar fill-dwim-mark nil)
+
+;;;###autoload
+(defun fill-dwim (arg)
+  "Fill or unfill paragraph or region.
+With prefix ARG fill only current line."
+  (interactive "P")
+  (or arg
+      (not fill-dwim-mark)
+      (equal (point-marker) fill-dwim-mark)
+      (setq fill-dwim-state nil))
+  (if mark-active
+      ;; This avoids deactivating the mark
+      (progn
+        (if fill-dwim-state
+            (call-interactively 'unfill-region)
+          (call-interactively 'fill-region))
+        (setq deactivate-mark nil))
+    (if arg
+        (fill-region (line-beginning-position) (line-end-position))
+      (if fill-dwim-state
+          (call-interactively 'unfill-paragraph)
+        (call-interactively 'fill-paragraph))))
+  (setq fill-dwim-mark (copy-marker (point)))
+  (unless arg
+    (setq fill-dwim-state (not fill-dwim-state))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; Widgets
@@ -416,6 +474,7 @@ To create a menu item something similar to this can be used:
 
 ;; Changed from move-beginning-of-line to beginning-of-line to support
 ;; physical-line-mode.
+;; Fix-me: use end-of-visual-line etc.
 ;;;###autoload
 (defun ourcomments-move-beginning-of-line(arg)
   "Move point to beginning of line or indentation.
@@ -885,7 +944,7 @@ what they will do ;-)."
     (set-fringe-bitmap-face bitmap face-important)))
 
 (defface better-fringes-bitmap
-  '((t (:foreground "khaki")))
+  '((t (:foreground "dark khaki")))
   "Face for bitmap fringes."
   :group 'better-fringes
   :group 'nxhtml)
@@ -911,6 +970,20 @@ what they will do ;-)."
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; Misc.
+
+(defcustom ourcomments-insert-date-and-time "%Y-%m-%d %R"
+  "Time format for command `ourcomments-insert-date-and-time'.
+See `format-time-string'."
+  :type 'string
+  :group 'ourcomments-util)
+
+;;;###autoload
+(defun ourcomments-insert-date-and-time ()
+  "Insert date and time.
+See option `ourcomments-insert-date-and-time' for how to
+customize it."
+  (interactive)
+  (insert (format-time-string ourcomments-insert-date-and-time)))
 
 ;;;###autoload
 (defun find-emacs-other-file (display-file)
@@ -1461,7 +1534,7 @@ function."
 (setq ourcomments-ido-adviced t)
 )
 
-(message "after advising ido")
+;;(message "after advising ido")
 ;;(ad-deactivate 'ido-visit-buffer)
 ;;(ad-activate 'ido-visit-buffer)
 
@@ -1486,7 +1559,7 @@ function."
   (ido-mode (or ido-mode 'buffer)))
 
 ;;;###autoload
-(defcustom ourcomments-ido-ctrl-tab nil
+(define-minor-mode ourcomments-ido-ctrl-tab
   "Enable buffer switching using C-Tab with function `ido-mode'.
 This changes buffer switching with function `ido-mode' the
 following way:
@@ -1502,24 +1575,22 @@ following way:
 
 Those keys are selected to at least be a little bit reminiscent
 of those in for example common web browsers."
-  :type 'boolean
-  :set (lambda (sym val)
-         (set-default sym val)
-         (if val
-             (ourcomments-ido-ctrl-tab-activate)
-           (ad-disable-advice 'ido-visit-buffer 'before
-                              'ourcomments-advice-ido-visit-buffer)
-           (ad-disable-advice 'ido-mode 'after
-                              'ourcomments-advice-ido-mode)
-           ;; For some reason this little complicated construct is
-           ;; needed. If they are not there the defadvice
-           ;; disappears. Huh.
-           ;;(if ourcomments-ido-old-state
-           ;;    (ido-mode ourcomments-ido-old-state)
-           ;;  (when ido-mode (ido-mode -1)))
-           ))
+  :global t
   :group 'emacsw32
-  :group 'convenience)
+  :group 'convenience
+  (if ourcomments-ido-ctrl-tab
+      (ourcomments-ido-ctrl-tab-activate)
+    (ad-disable-advice 'ido-visit-buffer 'before
+                       'ourcomments-advice-ido-visit-buffer)
+    (ad-disable-advice 'ido-mode 'after
+                       'ourcomments-advice-ido-mode)
+    ;; For some reason this little complicated construct is
+    ;; needed. If they are not there the defadvice
+    ;; disappears. Huh.
+    ;;(if ourcomments-ido-old-state
+    ;;    (ido-mode ourcomments-ido-old-state)
+    ;;  (when ido-mode (ido-mode -1)))
+    ))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; New Emacs instance
@@ -1536,14 +1607,18 @@ of those in for example common web browsers."
 
 (defun emacs-restart-in-kill ()
   "Last step in restart Emacs and start `server-mode' if on before."
-  (let ((restart-args (when ourcomments-restart-server-mode
-                        ;; Delay 3+2 sec to be sure the old server has stopped.
-                        (list "--eval=(run-with-idle-timer 5 nil 'server-mode 1)")))
-        ;; Fix-me: There is an Emacs bug here, default-directory shows
-        ;; up in load-path in the new Eamcs if restart-args is like
-        ;; this, but not otherwise. And it has w32 file syntax. The
-        ;; work around below is the best I can find at the moment.
-        (default-directory (file-name-as-directory (expand-file-name (car load-path)))))
+  (let* ((restart-args (when ourcomments-restart-server-mode
+                         ;; Delay 3+2 sec to be sure the old server has stopped.
+                         (list "--eval=(run-with-idle-timer 5 nil 'server-mode 1)")))
+         ;; Fix-me: There is an Emacs bug here, default-directory shows
+         ;; up in load-path in the new Eamcs if restart-args is like
+         ;; this, but not otherwise. And it has w32 file syntax. The
+         ;; work around below is the best I can find at the moment.
+         (first-path (catch 'first
+                       (dolist (p load-path)
+                         (when (file-directory-p p)
+                           (throw 'first p)))))
+         (default-directory (file-name-as-directory (expand-file-name first-path))))
     (apply 'call-process (ourcomments-find-emacs) nil 0 nil restart-args)
     ;; Wait to give focus to new Emacs instance:
     (sleep-for 3)))
@@ -1562,12 +1637,14 @@ of those in for example common web browsers."
   (save-buffers-kill-emacs))
 
 ;;;###autoload
-(defun emacs()
+(defun emacs (&rest args)
   "Start a new Emacs."
   (interactive)
   (recentf-save-list)
-  (call-process (ourcomments-find-emacs) nil 0 nil)
-  (message "Started 'emacs' - it will be ready soon ..."))
+  (let ((ret (apply 'call-process (ourcomments-find-emacs) nil 0 nil
+                    args)))
+    (message "Started 'emacs' - it will be ready soon ...")
+    ret))
 
 ;;;###autoload
 (defun emacs-buffer-file()
@@ -1595,32 +1672,34 @@ If there is no buffer file then instead start with `dired'."
   (message "Started 'emacs --debug-init' - it will be ready soon ..."))
 
 ;;;###autoload
-(defun emacs--no-desktop()
+(defun emacs--no-desktop (&rest args)
   (interactive)
-  (call-process (ourcomments-find-emacs) nil 0 nil "--no-desktop")
-  (message "Started 'emacs --no-desktop' - it will be ready soon ..."))
+  (let ((ret (apply 'call-process (ourcomments-find-emacs) nil 0 nil "--no-desktop"
+                    args)))
+    (message "Started 'emacs --no-desktop' - it will be ready soon ...")
+    ret))
 
 ;;;###autoload
-(defun emacs-Q()
+(defun emacs-Q (&rest args)
   "Start new Emacs without any customization whatsoever."
   (interactive)
-  (call-process (ourcomments-find-emacs) nil 0 nil "-Q")
-  (message "Started 'emacs -Q' - it will be ready soon ..."))
+  (let ((ret (apply 'call-process (ourcomments-find-emacs) nil 0 nil "-Q"
+                    args)))
+    (message "Started 'emacs -Q' - it will be ready soon ...")
+    ret))
 
 ;;;###autoload
-(defun emacs-Q-nxhtml()
+(defun emacs-Q-nxhtml(&rest args)
   "Start new Emacs with -Q and load nXhtml."
   (interactive)
-  (let ((autostart (if (boundp 'nxhtml-install-dir)
-                       (expand-file-name "autostart.el" nxhtml-install-dir)
-                     (expand-file-name "../../EmacsW32/nxhtml/autostart.el"
-                                       exec-directory))))
-    (call-process (ourcomments-find-emacs) nil 0 nil "-Q"
-                  "--debug-init"
-                  "--load" autostart
-                  )
+  (let* ((autostart (if (boundp 'nxhtml-install-dir)
+                        (expand-file-name "autostart.el" nxhtml-install-dir)
+                      (expand-file-name "../../EmacsW32/nxhtml/autostart.el"
+                                        exec-directory)))
+         (ret (apply 'emacs-Q "--debug-init" "--load" autostart args)))
     (message "Started 'emacs -Q --load \"%s\"' - it will be ready soon ..."
-             autostart)))
+             autostart)
+    ret))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1683,24 +1762,26 @@ with the command \\[tags-loop-continue]."
   (tags-query-replace from to delimited
 		      '(grep-get-buffer-files)))
 
+;;;###autoload
 (defun ldir-query-replace (from to files dir &optional delimited)
   "Replace FROM with TO in FILES in directory DIR.
-This runs `query-replace-regexp' in selected files.
+This runs `query-replace-regexp' in files matching FILES in
+directory DIR.
 
-See `dired-do-query-replace-regexp' for DELIMETED and more
-information."
+See `tags-query-replace' for DELIMETED and more information."
   (interactive (dir-replace-read-parameters nil nil))
   (message "%s" (list from to files dir delimited))
   ;;(let ((files (directory-files root nil file-regexp))) (message "files=%s" files))
   (tags-query-replace from to delimited
                       `(directory-files ,dir t ,files)))
 
+;;;###autoload
 (defun rdir-query-replace (from to file-regexp root &optional delimited)
   "Replace FROM with TO in FILES in directory tree ROOT.
-This runs `query-replace-regexp' in selected files.
+This runs `query-replace-regexp' in files matching FILES in
+directory tree ROOT.
 
-See `dired-do-query-replace-regexp' for DELIMETED and more
-information."
+See `tags-query-replace' for DELIMETED and more information."
   (interactive (dir-replace-read-parameters nil t))
   (message "%s" (list from to file-regexp root delimited))
   ;;(let ((files (directory-files root nil file-regexp))) (message "files=%s" files))
@@ -1737,6 +1818,7 @@ information."
 ;; Mostly copied from `grep-read-files'. Could possible be merged with
 ;; that.
 (defvar replace-read-files-history nil)
+;;;###autoload
 (defun replace-read-files (regexp &optional replace)
   "Read files arg for replace."
   (let* ((bn (or (buffer-file-name) (buffer-name)))
@@ -1812,7 +1894,8 @@ Return full path if found."
   (interactive "sProgram: ")
   ;;(let ((path (locate-file prog exec-path exec-suffixes 'executable)))
   (let ((path (executable-find prog)))
-    (when (called-interactively-p) (message "%s found in %s" prog path))
+    (when (with-no-warnings (called-interactively-p))
+      (message "%s found in %s" prog path))
     path))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1925,6 +2008,170 @@ Return full path if found."
           (delete-overlay ovl)
           (goto-char here))))))
 
+;; (defun ourcomments-org-paste-html-link (html-link)
+;;   "If there is an html link on clipboard paste it as an org link.
+;; If you have this on the clipboard
+;;    <a href=\"http://my.site.org/\">My Site</a>
+;; It will paste this
+;;    [[http://my.site.org/][My Site]]
+;; If the URL is to a local file it will create an org link to the
+;; file.
+;; Tip: You can use the Firefox plugin Copy as HTML Link, see URL
+;;      `https://addons.mozilla.org/en-US/firefox/addon/2617'.
+;; "
+;;   (interactive (list (current-kill 0)))
+;;   (let ((conv-link (ourcomments-org-convert-html-link html-link)))
+;;       (if (not conv-link)
+;;           (message (propertize "No html link on clipboard" 'face 'font-lock-warning-face))
+;;         (insert conv-link))))
+
+;; (defun ourcomments-org-convert-html-link (html-link)
+;;   (let (converted url str)
+;;     (save-match-data
+;;       (while (string-match ourcomments-org-paste-html-link-regexp html-link)
+;;         (setq converted t)
+;;         (setq url (match-string 1 html-link))
+;;         (setq str (match-string 2 html-link))
+;;         ;;(setq str (concat str (format "%s" (setq temp-n (1+ temp-n)))))
+;;         (setq html-link (replace-match (concat "[[" url "][" str "]]") nil nil html-link 0))))
+;;     (when converted
+;;       html-link)))
+
+(defconst ourcomments-org-paste-html-link-regexp
+  "\\`\\(?:<a [^>]*?href=\"\\(.*?\\)\"[^>]*?>\\([^<]*\\)</a>\\)\\'")
+
+;;(string-match-p ourcomments-org-paste-html-link-regexp "<a href=\"link\">text</a>")
+
+;;(defvar temp-n 0)
+(defun ourcomments-org-convert-html-links-in-buffer (beg end)
+  "Convert html link between BEG and END to org mode links.
+If there is an html link in the buffer
+
+   <a href=\"http://my.site.org/\">My Site</a>
+
+that starts at BEG and ends at END then convert it to this
+
+   [[http://my.site.org/][My Site]]
+
+If the URL is to a local file and the buffer is visiting a file
+make the link relative.
+
+However, if the html link is inside an #+BEGIN - #+END block or a
+variant of such blocks then leave the link as it is."
+  (when (derived-mode-p 'org-mode)
+    (save-match-data
+      (let ((here (copy-marker (point)))
+            url str converted
+            lit-beg lit-end)
+        (goto-char beg)
+        (save-restriction
+          (widen)
+          (setq lit-beg (search-backward "#+BEGIN" nil t))
+          (when lit-beg
+            (goto-char lit-beg)
+            (setq lit-end (or (search-forward "#+END" nil t)
+                              (point-max)))))
+        (when (or (not lit-beg)
+                  (> beg lit-end))
+          (goto-char beg)
+          (when (save-restriction
+                  (narrow-to-region beg end)
+                  (looking-at ourcomments-org-paste-html-link-regexp))
+            (setq converted t)
+            (setq url (match-string-no-properties 1))
+            (setq str (match-string-no-properties 2))
+            ;; Check if the URL is to a local file and absolute. And we
+            ;; have a buffer.
+            (when (and (buffer-file-name)
+                       (> (length url) 5)
+                       (string= (substring url 0 6) "file:/"))
+              (let ((abs-file-url
+                     (if (not (memq system-type '(windows-nt ms-dos)))
+                         (substring url 8)
+                       (if (string= (substring url 0 8) "file:///")
+                           (substring url 8)
+                         ;; file://c:/some/where.txt
+                         (substring url 7)))))
+                (setq url (concat "file:"
+                                  (file-relative-name abs-file-url
+                                                      (file-name-directory
+                                                       (buffer-file-name)))))))
+            (replace-match (concat "[[" url "][" str "]]") nil nil nil 0)))
+        (goto-char here)
+        nil))))
+
+(defvar ourcomments-paste-with-convert-hook nil
+  "Normal hook run after certain paste commands.
+These paste commands are in the list
+`ourcomments-paste-with-convert-commands'.
+
+Each function in this hook is called with two parameters, the
+start and end of the pasted text, until a function returns
+non-nil.")
+(add-hook 'ourcomments-paste-with-convert-hook 'ourcomments-org-convert-html-links-in-buffer)
+
+(defvar ourcomments-paste-beg) ;; dyn var
+(defvar ourcomments-paste-end) ;; dyn var
+(defun ourcomments-grab-paste-bounds (beg end len)
+  (setq ourcomments-paste-beg (min beg ourcomments-paste-beg))
+  (setq ourcomments-paste-end (max end ourcomments-paste-end)))
+
+(defmacro ourcomments-advice-paste-command (paste-command)
+  (let ((adv-name (make-symbol (concat "ourcomments-org-ad-"
+                                       (symbol-name paste-command)))))
+    `(defadvice ,paste-command (around
+                                ,adv-name)
+       (let ((ourcomments-paste-beg (point-max)) ;; dyn var
+             (ourcomments-paste-end (point-min))) ;; dyn var
+         (add-hook 'after-change-functions `ourcomments-grab-paste-bounds nil t)
+         ad-do-it ;;;;;;;;;;;;;;;;;;;;;;;;;;
+         (remove-hook 'after-change-functions `ourcomments-grab-paste-bounds t)
+         (run-hook-with-args-until-success 'ourcomments-paste-with-convert-hook
+                                           ourcomments-paste-beg
+                                           ourcomments-paste-end)))))
+
+(defcustom ourcomments-paste-with-convert-commands '(yank cua-paste viper-put-back viper-Put-back)
+  "Commands for which past converting is done.
+See `ourcomments-paste-with-convert-mode' for more information."
+  :type '(repeat function)
+  :group 'ourcomments-util)
+
+;;;###autoload
+(define-minor-mode ourcomments-paste-with-convert-mode
+  "Pasted text may be automatically converted in this mode.
+The functions in `ourcomments-paste-with-convert-hook' are run
+after commands in `ourcomments-paste-with-convert-commands' if any
+of the functions returns non-nil that text is inserted instead of
+the original text.
+
+For exampel when this mode is on and you paste an html link in an
+`org-mode' buffer it will be directly converted to an org style
+link. \(This is the default behaviour.)
+
+Tip: The Firefox plugin Copy as HTML Link is handy, see URL
+     `https://addons.mozilla.org/en-US/firefox/addon/2617'.
+
+Note: This minor mode will defadvice the paste commands."
+  :global t
+  :group 'cua
+  :group 'viper
+  :group 'ourcomments-util
+  (if ourcomments-paste-with-convert-mode
+      (progn
+        (dolist (command ourcomments-paste-with-convert-commands)
+          (eval `(ourcomments-advice-paste-command ,command))
+          (ad-activate command)))
+    (dolist (command ourcomments-paste-with-convert-commands)
+      (ad-unadvise command))))
+
+;; (ourcomments-advice-paste-command cua-paste)
+;; (ad-activate 'cua-paste)
+;; (ad-deactivate 'cua-paste)
+;; (ad-update 'cua-paste)
+;; (ad-unadvise 'cua-paste)
+
+
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; Menu commands to M-x history
 
@@ -1985,6 +2232,8 @@ Only commands that are not already in M-x history are added."
   (setq ourcomments-warnings (cons (apply 'format format-string args)
                                    ourcomments-warnings))
   (add-hook 'post-command-hook 'ourcomments-warning-post))
+
+
 
 (provide 'ourcomments-util)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
