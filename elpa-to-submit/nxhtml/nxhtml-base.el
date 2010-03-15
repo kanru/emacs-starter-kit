@@ -49,7 +49,7 @@
 
 (defconst nxhtml-menu:version "beta 2.07")
 (setq message-log-max t)
-(setq debug-on-error t)
+;(setq debug-on-error t)
 
 (defconst nxhtml-install-dir
   (file-name-directory (or load-file-name
