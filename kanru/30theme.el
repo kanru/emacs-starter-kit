@@ -6,7 +6,7 @@
 (defun krc-set-color-theme (&optional frame)
   (if frame (select-frame frame))
   (unless (window-system)
-    (color-theme-arjen)))
+    (color-theme-tty-dark)))
 
 (add-hook 'after-make-frame-functions 'krc-set-color-theme)
 (add-hook 'after-init-hook 'krc-set-color-theme)

@@ -1,5 +1,9 @@
 (require 'generic-x)
 
+(when (locate-library "js2-mode")
+  (autoload 'js2-mode "js2-mode" nil t)
+  (add-to-list 'auto-mode-alist '("\\.js\\'" . js2-mode)))
+
 (defvar filter-mode-keywords-regexp
   (regexp-opt '("FILTER" "IMPORT" "CREATE_NEW_LOG" "True" "False") 'words)
   "0xuart filter mode keywords")
