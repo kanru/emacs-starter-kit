@@ -18,6 +18,7 @@
                         ("emacs-devel"     . "tag:emacs-devel")
                         ("golang"          . "tag:golang")
                         ("archlinux"       . "tag:archlinux")
+                        ("lkml"            . "tag:lkml")
                         ))
 
 (defun notmuch-mark-as-spam ()
