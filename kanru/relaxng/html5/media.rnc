@@ -9,7 +9,7 @@ datatypes w = "http://whattf.org/datatype-draft"
 	# src not included
 	media.attrs = 
 		(	media.attrs.autoplay?
-		&	media.attrs.autobuffer?
+		&	media.attrs.preload?
 		&	media.attrs.controls?
 		&	media.attrs.loop?
 		)
@@ -17,9 +17,9 @@ datatypes w = "http://whattf.org/datatype-draft"
 			attribute autoplay   {
 				w:string "autoplay" | w:string ""
 			}
-		media.attrs.autobuffer   =
-			attribute autobuffer   {
-				w:string "autobuffer" | w:string ""
+		media.attrs.preload   =
+			attribute preload   {
+				w:string "none" | w:string "metadata" | w:string "auto" | w:string ""
 			}
 		media.attrs.controls  =
 			attribute controls  {
@@ -86,11 +86,11 @@ datatypes w = "http://whattf.org/datatype-draft"
 			}
 		video.attrs.height =
 			attribute height {
-				common.data.integer.positive
+				common.data.integer.non-negative
 			}
 		video.attrs.width =
 			attribute width {
-				common.data.integer.positive
+				common.data.integer.non-negative
 			}
 	video.inner.flow =
 		(	media.source
@@ -135,8 +135,17 @@ datatypes w = "http://whattf.org/datatype-draft"
 		&	common.attrs.aria.implicit.img?
 		)
 	figure.inner =
-		(	( legend.elem, common.inner.flow )
-		|	( common.inner.flow, legend.elem? )
+		(	( figcaption.elem, common.inner.flow )
+		|	( common.inner.flow, figcaption.elem? )
 		)
 
 	common.elem.flow |= figure.elem
+
+## Figure caption: <figcaption>
+
+	figcaption.elem =
+		element figcaption { figcaption.inner & figcaption.attrs }
+	figcaption.attrs =
+		( common.attrs )
+	figcaption.inner =
+		( common.inner.flow )
