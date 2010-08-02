@@ -1,0 +1,5 @@
+<locatingRules xmlns="http://thaiopensource.com/ns/locating-rules/1.0">
+  <uri pattern="*.atom" typeId="ATOM"/>
+  <namespace ns="http://www.w3.org/2005/Atom" typeId="ATOM"/>
+  <typeId id="ATOM" uri="atom.rnc"/>
+</locatingRules>
