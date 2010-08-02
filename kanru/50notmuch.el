@@ -21,6 +21,7 @@
                         ("lkml"            . "tag:lkml")
                         ))
 
+(setq notmuch-search-oldest-first nil)
 (defun notmuch-mark-as-spam ()
   (interactive)
   (notmuch-call-notmuch-process "tag" "-unread" "-inbox" "+spam"
