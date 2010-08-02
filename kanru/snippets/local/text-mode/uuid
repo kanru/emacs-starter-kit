@@ -1,0 +1,5 @@
+# -*- mode: snippet -*-
+# name: uuid
+# key: uuid
+# --
+$0`(call-process "uuid" nil t t "-v3" "493cd608-6078-40e5-9009-19403343e70a" (substring-no-properties (current-kill 0)))``(delete-backward-char 1)`

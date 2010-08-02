@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: xmlns:android
+# key: xmlns:android
+# binding: "C-c C-n C-a"
+# expand-env: ((yas/indent-line 'auto) (yas/wrap-around-region t))
+# --
+xmlns:android="http//schemas.android.com/apk/res/android"

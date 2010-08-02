@@ -1,0 +1,5 @@
+# -*- mode: snippet -*-
+# name: isotime
+# key: isotime
+# --
+`(format-time-string "%Y-%m-%dT%TZ" (current-time) t)`
