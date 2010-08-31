@@ -1,25 +1,37 @@
 (require 'notmuch)
-(setq notmuch-folders '(("inbox"           . "tag:inbox")
-                        ("unread"          . "tag:unread")
-                        ;; ("apt-listchanges" . "tag:apt-listchanges")
-                        ("awesome"         . "tag:awesome")
-                        ("awesome-devel"   . "tag:awesome-devel")
-                        ("chewing"         . "tag:chewing")
-                        ("chewing-devel"   . "tag:chewing-devel")
-                        ("dot"             . "tag:dot")
-                        ("hackingthursday" . "tag:hackingthursday")
-                        ("hojia"           . "tag:hojia")
-                        ("lug"             . "tag:lug")
-                        ("mew-int"         . "tag:mew-int")
-                        ("pcmanx"          . "tag:pcmanx")
-                        ("0xlab"           . "tag:0xlab")
-                        ("madbutterfly"    . "tag:madbutterfly")
-                        ("notmuch"         . "tag:notmuch")
-                        ("emacs-devel"     . "tag:emacs-devel")
-                        ("golang"          . "tag:golang")
-                        ("archlinux"       . "tag:archlinux")
-                        ("lkml"            . "tag:lkml")
-                        ))
+
+(defun notmuch-since-month ()
+  (let* ((one-month (seconds-to-time (* 30 86400)))
+         (today (current-time))
+         (yesterday (time-subtract today one-month)))
+    (concat (format-time-string "%s" yesterday)
+            ".."
+            (format-time-string "%s" today))))
+
+(let ((tags '("inbox"
+              "unread"
+              "awesome"
+              "awesome-devel"
+              "chewing"
+              "chewing-devel"
+              "dot"
+              "hackingthursday"
+              "hojia"
+              "lug"
+              "mew-int"
+              "pcmanx"
+              "0xlab"
+              "madbutterfly"
+              "notmuch"
+              "emacs-devel"
+              "golang"
+              "archlinux"
+              "lkml")))
+  (setq notmuch-saved-searches
+        (mapcar (lambda (tag)
+                  `(,tag . ,(concat "tag:" tag " and " (notmuch-since-month))))
+                tags))
+  )
 
 (setq notmuch-search-oldest-first nil)
 (defun notmuch-mark-as-spam ()
